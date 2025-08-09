@@ -366,6 +366,24 @@
       flex-direction: column;
     }
   }
+
+  #statusModalOverlay {
+    position: fixed;
+    top: 0; left: 0; right: 0; bottom: 0;
+    background: rgba(0,0,0,0.3);
+    display: none;
+    justify-content: center;
+    align-items: center;
+    z-index: 10000;
+  }
+
+  #statusModal {
+    background: white;
+    border-radius: 8px;
+    padding: 20px 30px;
+    box-shadow: 0 4px 12px rgba(0,0,0,0.3);
+    text-align: center;
+  }
 </style>
 </head>
 <body>
@@ -467,21 +485,8 @@
   </div>
   <!-- DLT Network Tab -->
   <div id="network" class="tab-content">
-    <h2>DLT Network '97 Nodes, Wallets, Liquidity & AMM Services (with Consensus)</h2>
+    <h2>DLT Network &mdash; Nodes, Wallets, Liquidity & AMM Services (with Consensus)</h2>
 
-    <div class="topbar">
-      <div class="menu-bar-network" role="toolbar">
-        <label>From:</label><select id="ui_sender"></select>
-        <label>To:</label><select id="ui_receiver"></select>
-        <label>Currency:</label><select id="ui_currency"></select>
-        <input id="ui_amount" type="number" placeholder="Amount" />
-        <button onclick="uiTransfer()">Transfer</button>
-        <button onclick="uiTokenize()">Tokenize</button>
-        <button onclick="uiSwap()">AMM Swap</button>
-        <button onclick="runConsensusRound()">Consensus Round</button>
-        <button onclick="syncAllNodes()">Sync Nodes</button>
-      </div>
-    </div>
     <div id="main">
       <aside id="networkPanel" class="card">
         <h3 style="margin-top:0">Network Map</h3>
@@ -520,6 +525,13 @@
   </div>
 </div>
 <!-- Modals -->
+<!-- Status Modal -->
+<div id="statusModalOverlay" role="dialog" aria-modal="true" aria-labelledby="statusModalTitle">
+  <div id="statusModal">
+    <h4 id="statusModalTitle">Transaction Status</h4>
+    <p id="statusModalMessage"></p>
+  </div>
+</div>
 <!-- Transactions / History Modal -->
 <div id="modalOverlay" role="dialog" aria-modal="true" aria-labelledby="modalTitle" aria-describedby="modalSearch">
   <div id="modal">
@@ -575,6 +587,7 @@ function initializeSharedSystem() {
   currencies.forEach(c => sharedLiquidityPool[c] = 0);
   cities.forEach(city => {
     sharedParticipants[city] = {
+      name: city,
       accounts: {},
       wallets: {},
       loans: {},
@@ -637,6 +650,34 @@ function switchTab(tabName) {
     renderAllNetwork();
   }
 }
+// ========== TRANSACTION PROCESSING ==========
+const statusModalOverlay = document.getElementById('statusModalOverlay');
+const statusModalMessage = document.getElementById('statusModalMessage');
+
+function showStatusModal(message) {
+    statusModalMessage.textContent = message;
+    statusModalOverlay.style.display = 'flex';
+}
+
+function hideStatusModal() {
+    statusModalOverlay.style.display = 'none';
+}
+
+function processTransaction(tx) {
+    showStatusModal('Processing transaction...');
+
+    setTimeout(() => {
+        network.broadcastTx(tx);
+        network.runConsensus();
+        updateAllDisplays();
+
+        statusModalMessage.textContent = 'Transaction Successful!';
+
+        setTimeout(() => {
+            hideStatusModal();
+        }, 1000); // Keep success message visible for 1 second
+    }, 500); // Simulate network latency
+}
 // ========== CROSS BORDER TRANSFER FUNCTIONS ==========
 // AMM logic - Simple constant product AMM: x * y = k
 function getAMMRates(fromCurrency) {
@@ -660,113 +701,6 @@ function getAMMRates(fromCurrency) {
   });
   return results;
 }
-function ammConvert(city, fromCurrency, toCurrency, amount) {
-  if(amount <= 0) return alert("Invalid swap amount.");
-  if(!currencies.includes(fromCurrency) || !currencies.includes(toCurrency)) return alert("Invalid currency.");
-  const fromBal = sharedParticipants[city].wallets[fromCurrency];
-  if(fromBal < amount) return alert(`Insufficient ${fromCurrency} tokens to swap.`);
-  const poolFrom = sharedLiquidityPool[fromCurrency];
-  const poolTo = sharedLiquidityPool[toCurrency];
-  if(poolFrom <= 0 || poolTo <= 0) return alert("Liquidity pool insufficient.");
-  const amountInWithFee = amount * 0.997;
-  const k = poolFrom * poolTo;
-  const newPoolFrom = poolFrom + amountInWithFee;
-  const newPoolTo = k / newPoolFrom;
-  const amountOut = poolTo - newPoolTo;
-  if(amountOut <= 0) return alert("Swap would result in zero output.");
-  sharedParticipants[city].wallets[fromCurrency] -= amount;
-  sharedParticipants[city].wallets[toCurrency] += amountOut;
-  addSharedAudit(`${city} swapped ${amount.toFixed(2)} ${fromCurrency} to ${amountOut.toFixed(2)} ${toCurrency} via AMM.`);
-  addSharedTransaction(city, 'Swap', `Swapped ${amount.toFixed(2)} ${fromCurrency} to ${amountOut.toFixed(2)} ${toCurrency}`);
-  updateAllDisplays();
-}
-function borrowFunds(city, currency, amount) {
-  if(amount <= 0) return;
-  if(sharedLiquidityPool[currency] < amount) return alert(`Liquidity pool insufficient for borrowing ${amount.toFixed(2)} ${currency}.`);
-  sharedParticipants[city].wallets[currency] += amount;
-  sharedParticipants[city].loans[currency] += amount;
-  sharedParticipants[city].borrowed[currency].amount += amount;
-  if(!sharedParticipants[city].borrowed[currency].lastInterestPostDate) {
-    sharedParticipants[city].borrowed[currency].lastInterestPostDate = new Date();
-  }
-  addSharedAudit(`${city} borrowed ${amount.toFixed(2)} ${currency} from liquidity pool.`);
-  addSharedTransaction(city, 'Borrow', `Borrowed ${amount.toFixed(2)} ${currency}`);
-}
-function transferWithBorrowOption(sender, receiver, currency, amount) {
-  if(amount <= 0) return alert("Invalid amount.");
-  const senderBalance = sharedParticipants[sender].wallets[currency];
-  const totalWalletBalance = currencies.reduce((acc,c) => acc + sharedParticipants[sender].wallets[c], 0);
-  if(senderBalance >= amount) {
-    // Direct transfer
-    sharedParticipants[sender].wallets[currency] -= amount;
-    sharedParticipants[receiver].wallets[currency] += amount;
-    addSharedAudit(`${sender} transferred ${amount.toFixed(2)} ${currency} to ${receiver}.`);
-    addSharedTransaction(sender, 'Transfer Out', `Transferred ${amount.toFixed(2)} ${currency} to ${receiver}`);
-    addSharedTransaction(receiver, 'Transfer In', `Received ${amount.toFixed(2)} ${currency} from ${sender}`);
-    updateAllDisplays();
-  } else if(totalWalletBalance >= amount) {
-    const wantsSwap = confirm(
-      `Insufficient ${currency} tokens.\nYou can swap from other currencies via AMM or borrow from liquidity pool.\n` +
-      `Press OK to swap or Cancel to borrow.`
-    );
-    if(wantsSwap) {
-      let fromCurrency = prompt(`Enter currency to swap from (Available balances):\n` +
-        currencies.filter(c => sharedParticipants[sender].wallets[c] > 0).map(c => `${c}: ${sharedParticipants[sender].wallets[c].toFixed(2)}`).join('\n'));
-      if(!fromCurrency || !currencies.includes(fromCurrency)) {
-        alert('Invalid currency for swap.');
-        return;
-      }
-      if(sharedParticipants[sender].wallets[fromCurrency] < amount) {
-        alert(`Insufficient ${fromCurrency} tokens to swap.`);
-        return;
-      }
-      ammConvert(sender, fromCurrency, currency, amount);
-      // Transfer after swap
-      sharedParticipants[sender].wallets[currency] -= amount;
-      sharedParticipants[receiver].wallets[currency] += amount;
-      addSharedAudit(`${sender} transferred ${amount.toFixed(2)} ${currency} tokens to ${receiver} after AMM swap.`);
-      addSharedTransaction(sender, 'Transfer Out', `Transferred ${amount.toFixed(2)} ${currency} to ${receiver} after swap`);
-      addSharedTransaction(receiver, 'Transfer In', `Received ${amount.toFixed(2)} ${currency} from ${sender}`);
-      updateAllDisplays();
-    } else {
-      // Borrow missing amount
-      const missing = amount - senderBalance;
-      borrowFunds(sender, currency, missing);
-      sharedParticipants[sender].wallets[currency] -= amount;
-      sharedParticipants[receiver].wallets[currency] += amount;
-      addSharedAudit(`${sender} transferred ${amount.toFixed(2)} ${currency} tokens to ${receiver} after borrowing.`);
-      addSharedTransaction(sender, 'Transfer Out', `Transferred ${amount.toFixed(2)} ${currency} to ${receiver} after borrowing`);
-      addSharedTransaction(receiver, 'Transfer In', `Received ${amount.toFixed(2)} ${currency} from ${sender}`);
-      updateAllDisplays();
-    }
-  } else {
-    // Not enough funds in any currency, borrow full missing amount
-    const missing = amount - senderBalance;
-    borrowFunds(sender, currency, missing);
-    sharedParticipants[sender].wallets[currency] -= amount;
-    sharedParticipants[receiver].wallets[currency] += amount;
-    addSharedAudit(`${sender} transferred ${amount.toFixed(2)} ${currency} tokens to ${receiver} after full borrowing.`);
-    addSharedTransaction(sender, 'Transfer Out', `Transferred ${amount.toFixed(2)} ${currency} to ${receiver} after full borrowing`);
-    addSharedTransaction(receiver, 'Transfer In', `Received ${amount.toFixed(2)} ${currency} from ${sender}`);
-    updateAllDisplays();
-  }
-}
-function repayBorrowed(city, currency, amount) {
-  if(amount <= 0) return alert("Invalid repay amount.");
-  if(sharedParticipants[city].borrowed[currency].amount <= 0) return alert("No borrowed amount to repay.");
-  if(sharedParticipants[city].wallets[currency] < amount) return alert(`Insufficient ${currency} tokens in wallet to repay.`);
-  let repayAmount = Math.min(amount, sharedParticipants[city].borrowed[currency].amount);
-  sharedParticipants[city].wallets[currency] -= repayAmount;
-  sharedParticipants[city].borrowed[currency].amount -= repayAmount;
-  sharedParticipants[city].loans[currency] -= repayAmount;
-  if(sharedParticipants[city].borrowed[currency].amount <= 0) {
-    sharedParticipants[city].borrowed[currency].amount = 0;
-    sharedParticipants[city].borrowed[currency].lastInterestPostDate = new Date();
-  }
-  addSharedAudit(`${city} repaid ${repayAmount.toFixed(2)} ${currency} to liquidity pool.`);
-  addSharedTransaction(city, 'Repay', `Repaid ${repayAmount.toFixed(2)} ${currency}`);
-  updateAllDisplays();
-}
 // UI Functions for Cross Border Transfer
 function tokenizeFromUI() {
   const participant = document.getElementById('tokenizeParticipant').value;
@@ -774,11 +708,15 @@ function tokenizeFromUI() {
   const amount = parseFloat(document.getElementById('tokenizeAmount').value);
   if(isNaN(amount) || amount <= 0) return alert("Invalid amount.");
   if(sharedParticipants[participant].accounts[currency] < amount) return alert(`Insufficient deposits in account to tokenize.`);
-  sharedParticipants[participant].accounts[currency] -= amount;
-  sharedParticipants[participant].wallets[currency] += amount;
-  addSharedAudit(`${participant} tokenized ${amount.toFixed(2)} ${currency} into wallet.`);
-  addSharedTransaction(participant, 'Tokenize', `Tokenized ${amount.toFixed(2)} ${currency}`);
-  updateAllDisplays();
+
+  const tx = new Transaction({
+    type: 'tokenize',
+    from: participant,
+    to: participant,
+    currency: currency,
+    amount: amount
+  });
+  processTransaction(tx);
 }
 function transferFromUI() {
   const sender = document.getElementById('sender').value;
@@ -786,7 +724,15 @@ function transferFromUI() {
   const currency = document.getElementById('transferCurrency').value;
   const amount = parseFloat(document.getElementById('transferAmount').value);
   if(isNaN(amount) || amount <= 0) return alert("Invalid amount.");
-  transferWithBorrowOption(sender, receiver, currency, amount);
+
+  const tx = new Transaction({
+    type: 'transfer',
+    from: sender,
+    to: receiver,
+    currency: currency,
+    amount: amount
+  });
+  processTransaction(tx);
 }
 function burnTokensUI() {
   const participant = document.getElementById('burnParticipant').value;
@@ -794,11 +740,15 @@ function burnTokensUI() {
   const amount = parseFloat(document.getElementById('burnAmount').value);
   if(isNaN(amount) || amount <= 0) return alert("Invalid amount.");
   if(sharedParticipants[participant].wallets[currency] < amount) return alert("Insufficient tokens to burn.");
-  sharedParticipants[participant].wallets[currency] -= amount;
-  sharedParticipants[participant].accounts[currency] += amount;
-  addSharedAudit(`${participant} burned ${amount.toFixed(2)} ${currency} tokens to deposit.`);
-  addSharedTransaction(participant, 'Burn', `Burned ${amount.toFixed(2)} ${currency}`);
-  updateAllDisplays();
+
+  const tx = new Transaction({
+    type: 'burn',
+    from: participant,
+    to: participant,
+    currency: currency,
+    amount: amount
+  });
+  processTransaction(tx);
 }
 function crossCurrencyTransfer() {
   const participant = document.getElementById('ammParticipant').value;
@@ -806,9 +756,48 @@ function crossCurrencyTransfer() {
   const toCurrency = document.getElementById('ammToCurrency').value;
   const amount = parseFloat(document.getElementById('ammAmount').value);
   if(isNaN(amount) || amount <= 0) return alert("Invalid amount.");
-  ammConvert(participant, fromCurrency, toCurrency, amount);
+  if(sharedParticipants[participant].wallets[fromCurrency] < amount) return alert(`Insufficient ${fromCurrency} tokens to swap.`);
+
+  // Add validation for liquidity pools
+  const poolFrom = sharedLiquidityPool[fromCurrency];
+  const poolTo = sharedLiquidityPool[toCurrency];
+  if(poolFrom <= 0 || poolTo <= 0) return alert("AMM liquidity pool is empty for one of the selected currencies. Swap cannot be performed.");
+
+  const tx = new Transaction({
+    type: 'swap',
+    from: participant,
+    to: participant,
+    currency: null,
+    amount: 0,
+    meta: {
+        fromCurrency: fromCurrency,
+        toCurrency: toCurrency,
+        amountIn: amount
+    }
+  });
+  processTransaction(tx);
+}
+function repayBorrowedUI() {
+  const participant = document.getElementById('repayParticipant').value;
+  const currency = document.getElementById('repayCurrency').value;
+  const amount = parseFloat(document.getElementById('repayAmount').value);
+  if(isNaN(amount) || amount <= 0) return alert("Invalid repay amount.");
+  if(sharedParticipants[participant].wallets[currency] < amount) return alert(`Insufficient ${currency} tokens in wallet to repay.`);
+  if(sharedParticipants[participant].borrowed[currency].amount <= 0) return alert("No borrowed amount to repay.");
+
+  const repayAmount = Math.min(amount, sharedParticipants[participant].borrowed[currency].amount);
+  const tx = new Transaction({
+      type: 'repay',
+      from: participant,
+      to: participant,
+      currency: currency,
+      amount: repayAmount
+  });
+  processTransaction(tx);
 }
 function postInterest() {
+  // This action is complex to model as a single transaction.
+  // For now, it will remain a direct admin action.
   const freq = document.getElementById('interestFrequency').value;
   const now = new Date();
   cities.forEach(city => {
@@ -837,13 +826,6 @@ function postInterest() {
     });
   });
   updateAllDisplays();
-}
-function repayBorrowedUI() {
-  const participant = document.getElementById('repayParticipant').value;
-  const currency = document.getElementById('repayCurrency').value;
-  const amount = parseFloat(document.getElementById('repayAmount').value);
-  if(isNaN(amount) || amount <= 0) return alert("Invalid repay amount.");
-  repayBorrowed(participant, currency, amount);
 }
 // Dashboard Update Functions
 function updateDashboard() {
@@ -1059,7 +1041,6 @@ class Network{
     aggregatedTxs.forEach(tx=>{
       Object.values(this.nodes).forEach(node=>{
         this.applyTxToNode(node, tx);
-        node.chain.unshift(tx);
       });
     });
     this.audit.unshift({timestamp:new Date(), message:`Consensus round by ${this.currentLeader} applied ${aggregatedTxs.length} txs`});
@@ -1074,45 +1055,79 @@ class Network{
   }
   applyTxToNode(node, tx) {
     if(node.chain.some(t=>t.id===tx.id)) return;
+
+    // Apply transaction logic to the node's state
+    const participant = node; // for clarity
     switch(tx.type){
       case 'tokenize':
-        node.accounts[tx.currency] -= tx.amount;
-        node.wallets[tx.currency] += tx.amount;
-        break;
-      case 'transfer':
-        if(tx.from === node.name) node.wallets[tx.currency] -= tx.amount;
-        if(tx.to === node.name) node.wallets[tx.currency] += tx.amount;
-        break;
-      case 'borrow':
-        if(tx.to === node.name){
-          node.wallets[tx.currency] += tx.amount;
-          node.loans[tx.currency] += tx.amount;
-          node.borrowed[tx.currency].amount += tx.amount;
+        if (participant.name === tx.from) {
+            participant.accounts[tx.currency] -= tx.amount;
+            participant.wallets[tx.currency] += tx.amount;
+            addSharedTransaction(participant.name, 'Tokenize', `Tokenized ${tx.amount.toFixed(2)} ${tx.currency}`);
         }
         break;
-      case 'repay':
-        if(tx.from === node.name){
-          node.wallets[tx.currency] -= tx.amount;
-          node.loans[tx.currency] -= tx.amount;
-          node.borrowed[tx.currency].amount = Math.max(0, node.borrowed[tx.currency].amount - tx.amount);
+      case 'transfer':
+        if (participant.name === tx.from) {
+            const balance = participant.wallets[tx.currency];
+            if (balance < tx.amount) {
+                const needed = tx.amount - balance;
+                if (sharedLiquidityPool[tx.currency] < needed) {
+                    addSharedAudit(`TX FAILED: Cannot borrow ${needed.toFixed(2)} ${tx.currency}. Insufficient liquidity.`);
+                    tx.failed = true;
+                    return;
+                }
+                participant.wallets[tx.currency] += needed;
+                participant.loans[tx.currency] += needed;
+                participant.borrowed[tx.currency].amount += needed;
+                addSharedTransaction(participant.name, 'Borrow', `Auto-borrowed ${needed.toFixed(2)} ${tx.currency} for transfer.`);
+            }
+            participant.wallets[tx.currency] -= tx.amount;
+            addSharedTransaction(participant.name, 'Transfer Out', `Transferred ${tx.amount.toFixed(2)} ${tx.currency} to ${tx.to}`);
+        }
+        if (participant.name === tx.to) {
+            if (tx.failed) {
+                addSharedAudit(`TX FAILED: Transfer to ${tx.to} of ${tx.amount.toFixed(2)} ${tx.currency} cancelled.`);
+                return;
+            }
+            participant.wallets[tx.currency] += tx.amount;
+            addSharedTransaction(participant.name, 'Transfer In', `Received ${tx.amount.toFixed(2)} ${tx.currency} from ${tx.from}`);
+        }
+        break;
+      case 'burn':
+        if (participant.name === tx.from) {
+            participant.wallets[tx.currency] -= tx.amount;
+            participant.accounts[tx.currency] += tx.amount;
+            addSharedTransaction(participant.name, 'Burn', `Burned ${tx.amount.toFixed(2)} ${tx.currency}`);
         }
         break;
       case 'swap':
-        if(tx.from === node.name){
-          node.wallets[tx.meta.fromCurrency] -= tx.meta.amountIn;
-        }
-        if(tx.to === node.name){
-          node.wallets[tx.meta.toCurrency] += tx.meta.amountOut;
+        if (participant.name === tx.from) {
+            const { fromCurrency, toCurrency, amountIn } = tx.meta;
+            const amountOut = this.ammService.getAmountOut(fromCurrency, toCurrency, amountIn);
+            if (amountOut > 0) {
+                participant.wallets[fromCurrency] -= amountIn;
+                participant.wallets[toCurrency] += amountOut;
+                addSharedTransaction(participant.name, 'Swap', `Swapped ${amountIn.toFixed(2)} ${fromCurrency} to ${amountOut.toFixed(2)} ${toCurrency}`);
+            }
         }
         break;
+      case 'repay':
+          if (participant.name === tx.from) {
+              participant.wallets[tx.currency] -= tx.amount;
+              participant.borrowed[tx.currency].amount -= tx.amount;
+              participant.loans[tx.currency] -= tx.amount;
+              addSharedTransaction(participant.name, 'Repay', `Repaid ${tx.amount.toFixed(2)} ${tx.currency}`);
+          }
+          break;
     }
+    // Add to chain after applying
+    node.chain.unshift(tx);
   }
   syncNodes(){
     Object.values(this.nodes).forEach(node=>{
       while(node.mempool.length) {
         const tx = node.mempool.pop();
         this.applyTxToNode(node, tx);
-        node.chain.unshift(tx);
       }
       node.lastSync = new Date();
     });
@@ -1132,10 +1147,8 @@ function uiTokenize(){
   const amount = parseFloat(document.getElementById('ui_amount').value);
   if(!amount || amount<=0) return alert('invalid amount');
 
-  network.liquidityService.addLiquidity(currency, amount);
   const tx = new Transaction({type:'tokenize', from:node, to:node, currency, amount});
-  network.broadcastTx(tx);
-  updateAllDisplays();
+  processTransaction(tx);
 }
 function uiTransfer(){
   const from=document.getElementById('ui_sender').value;
@@ -1145,8 +1158,7 @@ function uiTransfer(){
   if(!amt||amt<=0) return alert('invalid');
 
   const tx = new Transaction({type:'transfer', from, to, currency:cur, amount:amt});
-  network.broadcastTx(tx);
-  updateAllDisplays();
+  processTransaction(tx);
 }
 function uiSwap(){
   const node=document.getElementById('ui_sender').value;
@@ -1157,10 +1169,8 @@ function uiSwap(){
 
   const amountOut = network.ammService.getAmountOut(fromCur, toCur, amt);
   if(amountOut <= 0) { alert('Swap would return zero'); return; }
-  network.ammService.swap(fromCur, toCur, amt);
   const tx = new Transaction({type:'swap', from:node, to:node, currency:null, amount:0, meta:{fromCurrency:fromCur,toCurrency:toCur,amountIn:amt,amountOut}});
-  network.broadcastTx(tx);
-  updateAllDisplays();
+  processTransaction(tx);
 }
 function runConsensusRound() {
   network.runConsensus();
@@ -1454,12 +1464,19 @@ function filterAuditTable() {
 }
 // ========== INITIALIZATION ==========
 function initializeSystem() {
+  console.log("1. Starting system initialization...");
   initializeSharedSystem();
+  console.log("2. Shared system initialized.");
   initializeNetwork();
+  console.log("3. DLT Network initialized.");
   populateDropdowns();
+  console.log("4. Dropdowns populated.");
   updateDashboard();
+  console.log("5. Dashboard updated.");
   renderLiquidityAMMSection();
+  console.log("6. Liquidity/AMM section rendered.");
   renderAllNetwork();
+  console.log("7. Full network rendered. Initialization complete.");
 }
 // Initialize on page load
 window.addEventListener('DOMContentLoaded', initializeSystem);
@@ -1467,11 +1484,13 @@ window.addEventListener('DOMContentLoaded', initializeSystem);
 window.onclick = function(event) {
   if(event.target === modalOverlay) closeModal();
   if(event.target === auditModalOverlay) closeAuditModal();
+  if(event.target === statusModalOverlay) hideStatusModal();
 };
 window.onkeydown = function(event) {
   if(event.key === "Escape") {
     closeModal();
     closeAuditModal();
+    hideStatusModal();
   }
 };
 // Expose shared system to console for debugging
