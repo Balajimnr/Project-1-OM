@@ -696,8 +696,54 @@ function transferFromUI() {
 
     if (isNaN(amount) || amount <= 0) { alert("Invalid amount."); return; }
 
-    const tx = new Transaction({ type: 'transfer', from: sender, to: receiver, currency: currency, amount: amount });
-    processTransaction(tx);
+    const senderBalance = sharedParticipants[sender].wallets[currency];
+    if (senderBalance >= amount) {
+        // Sufficient funds, proceed with a simple transfer
+        const tx = new Transaction({ type: 'transfer', from: sender, to: receiver, currency: currency, amount: amount });
+        processTransaction(tx);
+        return;
+    }
+
+    // Insufficient funds, check if a swap is possible
+    const needed = amount - senderBalance;
+    const possibleSwaps = [];
+    for (const c of currencies) {
+        if (c === currency || sharedParticipants[sender].wallets[c] <= 0) continue;
+        const requiredInput = network.ammService.getAmountIn(c, currency, needed);
+        if (sharedParticipants[sender].wallets[c] >= requiredInput) {
+            possibleSwaps.push({ from: c, cost: requiredInput });
+        }
+    }
+
+    if (possibleSwaps.length > 0) {
+        const swapOptions = possibleSwaps.map(s => `${s.from} (cost: ~${s.cost.toFixed(2)})`).join(', ');
+        if (confirm(`Insufficient ${currency} balance. You can swap from other currencies. Perform swap?\nAvailable: ${swapOptions}`)) {
+            const fromSwapCurrency = prompt(`Enter currency to swap from (e.g., ${possibleSwaps.map(s=>s.from).join('/')}):`);
+            const selectedSwap = possibleSwaps.find(s => s.from === fromSwapCurrency);
+
+            if (selectedSwap) {
+                const swapTx = new Transaction({ type: 'swap', from: sender, to: sender, meta: { fromCurrency: selectedSwap.from, toCurrency: currency, amountIn: selectedSwap.cost } });
+                processTransaction(swapTx, () => {
+                    // After successful swap, perform the transfer
+                    const transferTx = new Transaction({ type: 'transfer', from: sender, to: receiver, currency: currency, amount: amount });
+                    processTransaction(transferTx);
+                });
+                return;
+            } else {
+                alert("Invalid currency selected for swap.");
+            }
+        }
+    }
+
+    // If swap is not possible or declined, attempt to borrow
+    if (sharedLiquidityPool[currency] >= needed) {
+        if(confirm(`Insufficient funds and swap was not performed. Do you want to borrow ${needed.toFixed(2)} ${currency} to complete the transfer?`)) {
+            const tx = new Transaction({ type: 'borrow_and_transfer', from: sender, to: receiver, currency: currency, amount: amount, meta: { borrowAmount: needed } });
+            processTransaction(tx);
+        }
+    } else {
+        alert(`Transfer failed: Insufficient funds, and not enough liquidity to swap or borrow.`);
+    }
 }
 function burnTokensUI() {
   const participant = document.getElementById('burnParticipant').value;
@@ -981,12 +1027,22 @@ class AMMService{
     const amountOut = poolTo - newPoolTo;
     return amountOut;
   }
-  swap(fromCurrency, toCurrency, amountIn){
-    const amountOut = this.getAmountOut(fromCurrency,toCurrency,amountIn);
-    if(amountOut <= 0) throw new Error('zero output');
-    this.liquidity.pool[fromCurrency] += amountIn;
-    this.liquidity.pool[toCurrency] -= amountOut;
-    return amountOut;
+  getAmountIn(fromCurrency, toCurrency, amountOut) {
+    const poolFrom = this.liquidity.pool[fromCurrency];
+    const poolTo = this.liquidity.pool[toCurrency];
+    if (!poolFrom || !poolTo || poolTo <= amountOut) return Infinity;
+
+    const k = poolFrom * poolTo;
+    const fee = 0.997;
+
+    const newPoolTo = poolTo - amountOut;
+    const newPoolFrom = k / newPoolTo;
+    const amountInWithFee = newPoolFrom - poolFrom;
+
+    if (amountInWithFee <= 0) return Infinity;
+
+    const amountIn = amountInWithFee / fee;
+    return amountIn;
   }
 }
 class Network{
@@ -1276,6 +1332,7 @@ function updateAllDisplays() {
   if (currentActiveTab === 'crossborder') {
     updateDashboard();
     renderLiquidityAMMSection();
+    renderInterestRateTable();
   } else if (currentActiveTab === 'network') {
     renderAllNetwork();
   }
@@ -1294,7 +1351,7 @@ function populateDropdowns() {
       });
     }
   });
-  const currencySelects = ['tokenizeCurrency', 'transferCurrency', 'burnCurrency', 'ammFromCurrency', 'ammToCurrency', 'repayCurrency', 'liquidityCurrency', 'ammCurrency'];
+  const currencySelects = ['tokenizeCurrency', 'transferCurrency', 'burnCurrency', 'ammFromCurrency', 'ammToCurrency', 'repayCurrency', 'liquidityCurrency'];
   currencySelects.forEach(id => {
     const sel = document.getElementById(id);
     if (sel) {
@@ -1445,7 +1502,7 @@ function renderAuditTable() {
   });
 }
 function filterAuditTable() {
-  const filter = auditSearch.value.toLowerCase();
+  const filter = modalSearch.value.toLowerCase();
   const rows = auditTable.querySelectorAll('tbody tr');
   rows.forEach(row => {
     const txt = row.textContent.toLowerCase();
