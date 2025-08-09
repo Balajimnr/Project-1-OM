@@ -516,10 +516,6 @@
             </div>
           </div>
         </section>
-        <section class="card">
-          <h3 style="margin:0">Transactions & Audit</h3>
-          <div id="transactionsList"></div>
-        </section>
       </main>
     </div>
   </div>
@@ -548,10 +544,10 @@
 <div id="auditModalOverlay" role="dialog" aria-modal="true" aria-labelledby="auditModalTitle" aria-describedby="auditSearch">
   <div id="auditModal">
     <span id="auditModalClose" onclick="closeAuditModal()" role="button" tabindex="0" aria-label="Close audit modal">&times;</span>
-    <h4 id="auditModalTitle">Audit Trail</h4>
+    <h4 id="auditModalTitle">Consolidated Audit Trail</h4>
     <input type="text" id="auditSearch" placeholder="Search audit..." oninput="filterAuditTable()" aria-label="Search audit trail" />
     <table id="auditTable" role="table" aria-describedby="auditModalTitle">
-      <thead><tr><th>Date</th><th>Message</th></tr></thead>
+      <thead><tr><th>Date</th><th>Source</th><th>Event</th></tr></thead>
       <tbody></tbody>
     </table>
   </div>
@@ -597,8 +593,14 @@ function initializeSharedSystem() {
       mempool: [],
       chain: []
     };
+    const sovereignCurrency = sovereigns[city];
     currencies.forEach(c => {
-      sharedParticipants[city].accounts[c] = 1000000;
+      // Initialize only USD and sovereign currency accounts with a balance
+      if (c === 'USD' || c === sovereignCurrency) {
+        sharedParticipants[city].accounts[c] = 1000000;
+      } else {
+        sharedParticipants[city].accounts[c] = 0;
+      }
       sharedParticipants[city].wallets[c] = 0;
       sharedParticipants[city].loans[c] = 0;
       sharedParticipants[city].borrowed[c] = { amount: 0, lastInterestPostDate: new Date() };
@@ -663,19 +665,25 @@ function hideStatusModal() {
     statusModalOverlay.style.display = 'none';
 }
 
-function processTransaction(tx) {
+function processTransaction(tx, onSuccessCallback) {
     showStatusModal('Processing transaction...');
 
     setTimeout(() => {
-        network.broadcastTx(tx);
-        network.runConsensus();
-        updateAllDisplays();
+        let result = network.broadcastAndConsolidate(tx);
 
-        statusModalMessage.textContent = 'Transaction Successful!';
+        if (result.success) {
+            updateAllDisplays();
+            statusModalMessage.textContent = result.message || 'Transaction Successful!';
+            if (onSuccessCallback) {
+                onSuccessCallback();
+            }
+        } else {
+            statusModalMessage.textContent = result.message || 'Transaction Failed!';
+        }
 
         setTimeout(() => {
             hideStatusModal();
-        }, 1000); // Keep success message visible for 1 second
+        }, 1500); // Keep message visible
     }, 500); // Simulate network latency
 }
 // ========== CROSS BORDER TRANSFER FUNCTIONS ==========
@@ -706,48 +714,64 @@ function tokenizeFromUI() {
   const participant = document.getElementById('tokenizeParticipant').value;
   const currency = document.getElementById('tokenizeCurrency').value;
   const amount = parseFloat(document.getElementById('tokenizeAmount').value);
-  if(isNaN(amount) || amount <= 0) return alert("Invalid amount.");
-  if(sharedParticipants[participant].accounts[currency] < amount) return alert(`Insufficient deposits in account to tokenize.`);
+  if(isNaN(amount) || amount <= 0) { alert("Invalid amount."); return; }
+  if(sharedParticipants[participant].accounts[currency] < amount) { alert(`Insufficient deposits in account to tokenize.`); return; }
 
-  const tx = new Transaction({
-    type: 'tokenize',
-    from: participant,
-    to: participant,
-    currency: currency,
-    amount: amount
-  });
+  const tx = new Transaction({ type: 'tokenize', from: participant, to: participant, currency: currency, amount: amount });
   processTransaction(tx);
 }
 function transferFromUI() {
-  const sender = document.getElementById('sender').value;
-  const receiver = document.getElementById('receiver').value;
-  const currency = document.getElementById('transferCurrency').value;
-  const amount = parseFloat(document.getElementById('transferAmount').value);
-  if(isNaN(amount) || amount <= 0) return alert("Invalid amount.");
+    const sender = document.getElementById('sender').value;
+    const receiver = document.getElementById('receiver').value;
+    const currency = document.getElementById('transferCurrency').value;
+    const amount = parseFloat(document.getElementById('transferAmount').value);
 
-  const tx = new Transaction({
-    type: 'transfer',
-    from: sender,
-    to: receiver,
-    currency: currency,
-    amount: amount
-  });
-  processTransaction(tx);
+    if (isNaN(amount) || amount <= 0) { alert("Invalid amount."); return; }
+
+    const senderBalance = sharedParticipants[sender].wallets[currency];
+    if (senderBalance >= amount) {
+        const tx = new Transaction({ type: 'transfer', from: sender, to: receiver, currency: currency, amount: amount });
+        processTransaction(tx);
+        return;
+    }
+
+    const totalWalletBalance = Object.values(sharedParticipants[sender].wallets).reduce((acc, v) => acc + v, 0);
+    if (totalWalletBalance >= amount) {
+        if (confirm(`Insufficient ${currency} balance. You have funds in other currencies. Would you like to perform a swap first?`)) {
+            const fromSwapCurrency = prompt("Enter currency to swap from (e.g., USD, JPY):");
+            if (!currencies.includes(fromSwapCurrency) || sharedParticipants[sender].wallets[fromSwapCurrency] < amount) {
+                alert("Invalid or insufficient currency for swap.");
+                return;
+            }
+            const swapTx = new Transaction({ type: 'swap', from: sender, to: sender, meta: { fromCurrency: fromSwapCurrency, toCurrency: currency, amountIn: amount } });
+            processTransaction(swapTx, () => {
+                // After successful swap, perform the transfer
+                const transferTx = new Transaction({ type: 'transfer', from: sender, to: receiver, currency: currency, amount: amount });
+                processTransaction(transferTx);
+            });
+            return;
+        }
+    }
+
+    // If swap is not possible or declined, attempt to borrow
+    const needed = amount - senderBalance;
+    if (sharedLiquidityPool[currency] >= needed) {
+        if(confirm(`Insufficient funds. Do you want to borrow ${needed.toFixed(2)} ${currency} to complete the transfer?`)) {
+            const tx = new Transaction({ type: 'borrow_and_transfer', from: sender, to: receiver, currency: currency, amount: amount, meta: { borrowAmount: needed } });
+            processTransaction(tx);
+        }
+    } else {
+        alert(`Transfer failed: Insufficient funds and not enough liquidity in the pool to borrow.`);
+    }
 }
 function burnTokensUI() {
   const participant = document.getElementById('burnParticipant').value;
   const currency = document.getElementById('burnCurrency').value;
   const amount = parseFloat(document.getElementById('burnAmount').value);
-  if(isNaN(amount) || amount <= 0) return alert("Invalid amount.");
-  if(sharedParticipants[participant].wallets[currency] < amount) return alert("Insufficient tokens to burn.");
+  if(isNaN(amount) || amount <= 0) { alert("Invalid amount."); return; }
+  if(sharedParticipants[participant].wallets[currency] < amount) { alert("Insufficient tokens to burn."); return; }
 
-  const tx = new Transaction({
-    type: 'burn',
-    from: participant,
-    to: participant,
-    currency: currency,
-    amount: amount
-  });
+  const tx = new Transaction({ type: 'burn', from: participant, to: participant, currency: currency, amount: amount });
   processTransaction(tx);
 }
 function crossCurrencyTransfer() {
@@ -755,49 +779,26 @@ function crossCurrencyTransfer() {
   const fromCurrency = document.getElementById('ammFromCurrency').value;
   const toCurrency = document.getElementById('ammToCurrency').value;
   const amount = parseFloat(document.getElementById('ammAmount').value);
-  if(isNaN(amount) || amount <= 0) return alert("Invalid amount.");
-  if(sharedParticipants[participant].wallets[fromCurrency] < amount) return alert(`Insufficient ${fromCurrency} tokens to swap.`);
+  if(isNaN(amount) || amount <= 0) { alert("Invalid amount."); return; }
+  if(sharedParticipants[participant].wallets[fromCurrency] < amount) { alert(`Insufficient ${fromCurrency} tokens to swap.`); return; }
+  if(sharedLiquidityPool[fromCurrency] <= 0 || sharedLiquidityPool[toCurrency] <= 0) { alert("AMM liquidity pool is empty for one of the selected currencies. Swap cannot be performed."); return; }
 
-  // Add validation for liquidity pools
-  const poolFrom = sharedLiquidityPool[fromCurrency];
-  const poolTo = sharedLiquidityPool[toCurrency];
-  if(poolFrom <= 0 || poolTo <= 0) return alert("AMM liquidity pool is empty for one of the selected currencies. Swap cannot be performed.");
-
-  const tx = new Transaction({
-    type: 'swap',
-    from: participant,
-    to: participant,
-    currency: null,
-    amount: 0,
-    meta: {
-        fromCurrency: fromCurrency,
-        toCurrency: toCurrency,
-        amountIn: amount
-    }
-  });
+  const tx = new Transaction({ type: 'swap', from: participant, to: participant, meta: { fromCurrency: fromCurrency, toCurrency: toCurrency, amountIn: amount } });
   processTransaction(tx);
 }
 function repayBorrowedUI() {
   const participant = document.getElementById('repayParticipant').value;
   const currency = document.getElementById('repayCurrency').value;
   const amount = parseFloat(document.getElementById('repayAmount').value);
-  if(isNaN(amount) || amount <= 0) return alert("Invalid repay amount.");
-  if(sharedParticipants[participant].wallets[currency] < amount) return alert(`Insufficient ${currency} tokens in wallet to repay.`);
-  if(sharedParticipants[participant].borrowed[currency].amount <= 0) return alert("No borrowed amount to repay.");
+  if(isNaN(amount) || amount <= 0) { alert("Invalid repay amount."); return; }
+  if(sharedParticipants[participant].wallets[currency] < amount) { alert(`Insufficient ${currency} tokens in wallet to repay.`); return; }
+  if(sharedParticipants[participant].borrowed[currency].amount <= 0) { alert("No borrowed amount to repay."); return; }
 
   const repayAmount = Math.min(amount, sharedParticipants[participant].borrowed[currency].amount);
-  const tx = new Transaction({
-      type: 'repay',
-      from: participant,
-      to: participant,
-      currency: currency,
-      amount: repayAmount
-  });
+  const tx = new Transaction({ type: 'repay', from: participant, to: participant, currency: currency, amount: repayAmount });
   processTransaction(tx);
 }
 function postInterest() {
-  // This action is complex to model as a single transaction.
-  // For now, it will remain a direct admin action.
   const freq = document.getElementById('interestFrequency').value;
   const now = new Date();
   cities.forEach(city => {
@@ -1023,6 +1024,10 @@ class Network{
       this.liquidityService.pool[c] = sharedLiquidityPool[c];
     });
   }
+  broadcastAndConsolidate(tx) {
+    this.broadcastTx(tx);
+    return this.runConsensus();
+  }
   broadcastTx(tx){
     Object.values(this.nodes).forEach(n=>n.mempool.unshift(tx));
     this.audit.unshift({timestamp:new Date(), message:`Broadcast ${tx.type} ${tx.id}`});
@@ -1031,33 +1036,50 @@ class Network{
   runConsensus(){
     this.syncLiquidityService();
     const leader = this.nodes[this.currentLeader];
-    const aggregatedTxs = [];
-    Object.values(this.nodes).forEach(node=>{
-      while(node.mempool.length){
-        const tx = node.mempool.pop();
-        aggregatedTxs.push(tx);
-      }
-    });
-    aggregatedTxs.forEach(tx=>{
-      Object.values(this.nodes).forEach(node=>{
-        this.applyTxToNode(node, tx);
-      });
-    });
-    this.audit.unshift({timestamp:new Date(), message:`Consensus round by ${this.currentLeader} applied ${aggregatedTxs.length} txs`});
+    let success = true;
+    let message = 'Consensus successful';
 
-    // Rotate leader
+    const tx = leader.mempool.pop();
+    if (!tx) return { success: true, message: "No transactions in mempool."};
+
+    // Simple validation before applying
+    const validationResult = this.validateTransaction(tx);
+    if (!validationResult.valid) {
+        success = false;
+        message = validationResult.message;
+        addSharedAudit(`TX ${tx.id} FAILED: ${message}`);
+    } else {
+        Object.values(this.nodes).forEach(node => {
+            this.applyTxToNode(node, tx);
+        });
+        addSharedAudit(`TX ${tx.id} SUCCESS`);
+    }
+
+    this.audit.unshift({timestamp:new Date(), message:`Consensus round by ${this.currentLeader} processed ${tx.id} with status: ${success ? 'Success' : 'Failed'}`});
     const idx = cities.indexOf(this.currentLeader);
     this.currentLeader = cities[(idx+1)%cities.length];
-
-    // Sync back to shared state
     recalcSharedLiquidityPool();
-    addSharedAudit(`Consensus round completed, ${aggregatedTxs.length} transactions processed`);
+
+    return { success, message };
+  }
+  validateTransaction(tx) {
+      const participant = this.nodes[tx.from];
+      switch (tx.type) {
+          case 'transfer_with_borrow':
+              const balance = participant.wallets[tx.currency];
+              if (balance >= tx.amount) return { valid: true }; // No borrow needed
+              const needed = tx.amount - balance;
+              if (sharedLiquidityPool[tx.currency] < needed) {
+                  return { valid: false, message: `Insufficient liquidity to borrow ${needed.toFixed(2)}.` };
+              }
+              break;
+      }
+      return { valid: true };
   }
   applyTxToNode(node, tx) {
     if(node.chain.some(t=>t.id===tx.id)) return;
 
-    // Apply transaction logic to the node's state
-    const participant = node; // for clarity
+    const participant = node;
     switch(tx.type){
       case 'tokenize':
         if (participant.name === tx.from) {
@@ -1067,28 +1089,18 @@ class Network{
         }
         break;
       case 'transfer':
+      case 'borrow_and_transfer':
         if (participant.name === tx.from) {
-            const balance = participant.wallets[tx.currency];
-            if (balance < tx.amount) {
-                const needed = tx.amount - balance;
-                if (sharedLiquidityPool[tx.currency] < needed) {
-                    addSharedAudit(`TX FAILED: Cannot borrow ${needed.toFixed(2)} ${tx.currency}. Insufficient liquidity.`);
-                    tx.failed = true;
-                    return;
-                }
-                participant.wallets[tx.currency] += needed;
-                participant.loans[tx.currency] += needed;
-                participant.borrowed[tx.currency].amount += needed;
-                addSharedTransaction(participant.name, 'Borrow', `Auto-borrowed ${needed.toFixed(2)} ${tx.currency} for transfer.`);
+            if (tx.type === 'borrow_and_transfer') {
+                participant.wallets[tx.currency] += tx.meta.borrowAmount;
+                participant.loans[tx.currency] += tx.meta.borrowAmount;
+                participant.borrowed[tx.currency].amount += tx.meta.borrowAmount;
+                addSharedTransaction(participant.name, 'Borrow', `Auto-borrowed ${tx.meta.borrowAmount.toFixed(2)} ${tx.currency} for transfer.`);
             }
             participant.wallets[tx.currency] -= tx.amount;
             addSharedTransaction(participant.name, 'Transfer Out', `Transferred ${tx.amount.toFixed(2)} ${tx.currency} to ${tx.to}`);
         }
         if (participant.name === tx.to) {
-            if (tx.failed) {
-                addSharedAudit(`TX FAILED: Transfer to ${tx.to} of ${tx.amount.toFixed(2)} ${tx.currency} cancelled.`);
-                return;
-            }
             participant.wallets[tx.currency] += tx.amount;
             addSharedTransaction(participant.name, 'Transfer In', `Received ${tx.amount.toFixed(2)} ${tx.currency} from ${tx.from}`);
         }
@@ -1120,66 +1132,19 @@ class Network{
           }
           break;
     }
-    // Add to chain after applying
     node.chain.unshift(tx);
-  }
-  syncNodes(){
-    Object.values(this.nodes).forEach(node=>{
-      while(node.mempool.length) {
-        const tx = node.mempool.pop();
-        this.applyTxToNode(node, tx);
-      }
-      node.lastSync = new Date();
-    });
-    this.audit.unshift({timestamp:new Date(), message:'Network sync complete'});
-    recalcSharedLiquidityPool();
-    addSharedAudit('Network nodes synchronized');
   }
 }
 let network;
 function initializeNetwork() {
   network = new Network();
 }
-// Network UI Functions
-function uiTokenize(){
-  const node = document.getElementById('ui_sender').value;
-  const currency = document.getElementById('ui_currency').value;
-  const amount = parseFloat(document.getElementById('ui_amount').value);
-  if(!amount || amount<=0) return alert('invalid amount');
-
-  const tx = new Transaction({type:'tokenize', from:node, to:node, currency, amount});
-  processTransaction(tx);
-}
-function uiTransfer(){
-  const from=document.getElementById('ui_sender').value;
-  const to=document.getElementById('ui_receiver').value;
-  const cur=document.getElementById('ui_currency').value;
-  const amt=parseFloat(document.getElementById('ui_amount').value);
-  if(!amt||amt<=0) return alert('invalid');
-
-  const tx = new Transaction({type:'transfer', from, to, currency:cur, amount:amt});
-  processTransaction(tx);
-}
-function uiSwap(){
-  const node=document.getElementById('ui_sender').value;
-  const fromCur=document.getElementById('ui_currency').value;
-  const toCur = currencies.find(c=>c!==fromCur);
-  const amt = parseFloat(document.getElementById('ui_amount').value);
-  if(!amt||amt<=0) return alert('invalid');
-
-  const amountOut = network.ammService.getAmountOut(fromCur, toCur, amt);
-  if(amountOut <= 0) { alert('Swap would return zero'); return; }
-  const tx = new Transaction({type:'swap', from:node, to:node, currency:null, amount:0, meta:{fromCurrency:fromCur,toCurrency:toCur,amountIn:amt,amountOut}});
-  processTransaction(tx);
-}
-function runConsensusRound() {
-  network.runConsensus();
-  updateAllDisplays();
-}
-function syncAllNodes() {
-  network.syncNodes();
-  updateAllDisplays();
-}
+// Network UI Functions (now unused, can be removed later)
+function uiTokenize(){}
+function uiTransfer(){}
+function uiSwap(){}
+function runConsensusRound() {}
+function syncAllNodes() {}
 // Network Rendering Functions
 function renderNodesList(){
   const nodesList = document.getElementById('nodesList');
@@ -1188,7 +1153,7 @@ function renderNodesList(){
   Object.values(network.nodes).forEach(n=>{
     const div=document.createElement('div');
     div.className='nodeItem';
-    div.innerHTML = `<div><span class='nodeBadge'>${n.name || cities.find(c => sharedParticipants[c] === n)}</span> <span class='muted'>(${sovereigns[n.name || cities.find(c => sharedParticipants[c] === n)]})</span></div><div class='muted'>Wallet ${n.wallets[sovereigns[n.name || cities.find(c => sharedParticipants[c] === n)]].toFixed(0)}</div>`;
+    div.innerHTML = `<div><span class='nodeBadge'>${n.name}</span> <span class='muted'>(${sovereigns[n.name]})</span></div><div class='muted'>Wallet ${n.wallets[sovereigns[n.name]].toFixed(0)}</div>`;
     nodesList.appendChild(div);
   });
 }
@@ -1230,25 +1195,6 @@ function renderAMMRates(){
   });
   html += '</tbody></table>';
   out.innerHTML = html;
-}
-function renderTransactions(){
-  const div = document.getElementById('transactionsList');
-  if (!div) return;
-  div.innerHTML='';
-  const combined = [];
-  combined.push(...network.audit.slice(0,80).map(a=>({time:a.timestamp,msg:a.message})));
-  Object.values(network.nodes).forEach((n, idx)=> {
-    const cityName = cities[idx];
-    combined.push(...n.chain.slice(0,40).map(t=>({time:t.timestamp,msg:`[${cityName}] ${t.type} ${t.currency||''} ${t.amount||''} ${t.meta?JSON.stringify(t.meta):''}`})));
-  });
-  combined.sort((a,b)=>b.time - a.time);
-  combined.slice(0,80).forEach(e=>{
-    const row = document.createElement('div');
-    row.style.padding='6px 0';
-    row.style.borderBottom='1px dashed #eef6ff';
-    row.innerHTML = `<div style='font-weight:700'>${new Date(e.time).toLocaleString()}</div><div class='muted'>${e.msg}</div>`;
-    div.appendChild(row);
-  });
 }
 function renderNetworkCanvas(){
   const c = document.getElementById('networkCanvas');
@@ -1344,7 +1290,7 @@ function populateDropdowns() {
       });
     }
   });
-  // Network UI dropdowns
+  // Network UI dropdowns (kept for potential future use)
   const networkSelects = ['ui_sender', 'ui_receiver'];
   networkSelects.forEach(id => {
     const sel = document.getElementById(id);
@@ -1448,9 +1394,37 @@ function closeAuditModal() {
 function renderAuditTable() {
   const tbody = auditTable.querySelector('tbody');
   tbody.innerHTML = '';
+
+  const allEvents = [];
+
+  // Add network-level audit messages
   sharedAuditTrail.forEach(entry => {
+    allEvents.push({
+      timestamp: entry.timestamp,
+      source: 'Network',
+      message: entry.message
+    });
+  });
+
+  // Add participant-level transactions
+  cities.forEach(city => {
+    const participant = sharedParticipants[city];
+    participant.transactions.forEach(tx => {
+      allEvents.push({
+        timestamp: tx.timestamp,
+        source: city,
+        message: `${tx.type}: ${tx.details}`
+      });
+    });
+  });
+
+  // Sort all events by timestamp, descending
+  allEvents.sort((a, b) => b.timestamp - a.timestamp);
+
+  // Render the combined list, limited to the most recent 200 entries
+  allEvents.slice(0, 200).forEach(entry => {
     const tr = document.createElement('tr');
-    tr.innerHTML = `<td>${entry.timestamp.toLocaleString()}</td><td>${entry.message}</td>`;
+    tr.innerHTML = `<td>${entry.timestamp.toLocaleString()}</td><td>${entry.source}</td><td>${entry.message}</td>`;
     tbody.appendChild(tr);
   });
 }
