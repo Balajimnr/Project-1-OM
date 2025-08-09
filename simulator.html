@@ -455,7 +455,7 @@
     <!-- Liquidity & AMM side by side -->
     <div id="ammLiquidityWrapper" aria-label="Liquidity Pool and AMM rates section">
       <section id="liquiditySection" tabindex="0" aria-label="Liquidity Pool balances">
-        <h3>Liquidity pool</h3>
+        <h3>Liquidity pool (in millions)</h3>
         <div id="walletBalanceMatrix"></div>
       </section>
       <section id="ammSection" tabindex="0" aria-label="Automated Market Maker rates">
@@ -680,21 +680,27 @@ function processTransaction(tx, onSuccessCallback) {
     showStatusModal('Processing transaction...');
 
     setTimeout(() => {
-        const result = network.broadcastAndConsolidate(tx);
+        try {
+            const result = network.broadcastAndConsolidate(tx);
 
-        if (result.success) {
-            updateAllDisplays();
-            statusModalMessage.textContent = result.message || 'Transaction Successful!';
-            if (onSuccessCallback) {
-                onSuccessCallback();
+            if (result.success) {
+                // Use a timeout to ensure the UI updates after the current execution stack clears.
+                setTimeout(() => updateAllDisplays(), 0);
+                statusModalMessage.textContent = result.message || 'Transaction Successful!';
+                if (onSuccessCallback) {
+                    onSuccessCallback();
+                }
+            } else {
+                statusModalMessage.textContent = result.message || 'Transaction Failed!';
             }
-        } else {
-            statusModalMessage.textContent = result.message || 'Transaction Failed!';
+        } catch (e) {
+            statusModalMessage.textContent = `ERROR: ${e.message}`;
+            console.error(e);
         }
 
         setTimeout(() => {
             hideStatusModal();
-        }, 1500); // Keep message visible
+        }, 2500); // Keep message visible a bit longer for errors
     }, 500); // Simulate network latency
 }
 // ========== CROSS BORDER TRANSFER FUNCTIONS ==========
@@ -977,7 +983,7 @@ function renderWalletBalanceMatrix() {
             const balance = sharedParticipants[city].wallets[c];
             currencyTotals[c] += balance;
             const cell = row.insertCell();
-            cell.textContent = balance.toFixed(2);
+            cell.textContent = (balance / 1000000).toFixed(4); // Scale to millions
         });
     });
 
@@ -989,7 +995,7 @@ function renderWalletBalanceMatrix() {
     footerRow.appendChild(totalTh);
     currencies.forEach(c => {
         const cell = footerRow.insertCell();
-        cell.textContent = currencyTotals[c].toFixed(2);
+        cell.textContent = (currencyTotals[c] / 1000000).toFixed(4); // Scale to millions
         cell.style.fontWeight = 'bold';
     });
 
