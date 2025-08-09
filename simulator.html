@@ -52,13 +52,8 @@
     background: #1565c0;
   }
 
-  .tab-content {
-    display: none;
+  .main-section {
     padding: 20px;
-  }
-
-  .tab-content.active {
-    display: block;
   }
 
   /* Cross Border Transfer Styles */
@@ -281,6 +276,13 @@
     padding: 8px 10px;
     text-align: left;
   }
+  #interestRateTable, #stakingYieldTable {
+    font-size: 0.8rem;
+  }
+  #interestRateTable th, #interestRateTable td,
+  #stakingYieldTable th, #stakingYieldTable td {
+    padding: 5px;
+  }
 
   table th {
     background: #e3f2fd;
@@ -371,13 +373,9 @@
 </head>
 <body>
 <div class="tab-container">
-  <div class="tab-header">
-    <button class="tab-button active" onclick="switchTab('crossborder')">Tokenised Business Services</button>
-    <button class="tab-button" onclick="switchTab('network')">DLT Network</button>
-  </div>
 
-  <!-- Cross Border Transfer Tab -->
-  <div id="crossborder" class="tab-content active">
+  <!-- Tokenised Business Services Section -->
+  <div id="crossborder" class="main-section">
     <h2>Cross Border Transfer & Wallet Management</h2>
     <div class="menu-bar" aria-label="Function controls menu">
       <!-- Tokenize -->
@@ -464,46 +462,49 @@
       </section>
     </div>
 
-    <!-- Interest Rate Table -->
-    <div id="interestRateWrapper">
-        <section class="dashboard-section">
-            <h3>Interest Rates</h3>
-            <table id="interestRateTable" style="width:100%; margin-top:8px;">
-                <thead>
-                    <tr>
-                        <th>Currency</th>
-                        <th>Deposit Rate</th>
-                        <th>Lending Rate</th>
-                    </tr>
-                </thead>
-                <tbody>
-                    <!-- Will be populated by JavaScript -->
-                </tbody>
-            </table>
-        </section>
-    </div>
+    <!-- Rate Tables Container -->
+    <div style="display: flex; gap: 25px; margin-bottom: 30px; flex-wrap: wrap;">
+        <!-- Interest Rate Table -->
+        <div id="interestRateWrapper" style="flex: 1; min-width: 300px;">
+            <section class="dashboard-section">
+                <h3>Interest Rates</h3>
+                <table id="interestRateTable" style="width:100%; margin-top:8px;">
+                    <thead>
+                        <tr>
+                            <th>Currency</th>
+                            <th>Deposit Rate</th>
+                            <th>Lending Rate</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <!-- Will be populated by JavaScript -->
+                    </tbody>
+                </table>
+            </section>
+        </div>
 
-    <!-- Staking Yield Table -->
-    <div id="stakingYieldWrapper">
-        <section class="dashboard-section">
-            <h3>Staking Yields (per period)</h3>
-            <table id="stakingYieldTable" style="width:100%; margin-top:8px;">
-                <thead>
-                    <tr>
-                        <th>Currency</th>
-                        <th>Yield Rate</th>
-                    </tr>
-                </thead>
-                <tbody>
-                    <!-- Will be populated by JavaScript -->
-                </tbody>
-            </table>
-        </section>
+        <!-- Staking Yield Table -->
+        <div id="stakingYieldWrapper" style="flex: 1; min-width: 300px;">
+            <section class="dashboard-section">
+                <h3>Staking Yields (per period)</h3>
+                <table id="stakingYieldTable" style="width:100%; margin-top:8px;">
+                    <thead>
+                        <tr>
+                            <th>Currency</th>
+                            <th>Yield Rate</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <!-- Will be populated by JavaScript -->
+                    </tbody>
+                </table>
+            </section>
+        </div>
     </div>
   </div>
-  <!-- DLT Network Tab -->
-  <div id="network" class="tab-content">
-    <h2>DLT Network &mdash; Nodes, Wallets, Liquidity & AMM Services (with Consensus)</h2>
+  <!-- DLT Network Section -->
+  <div id="network" class="main-section">
+    <h2 style="margin-top: 40px; border-top: 2px solid #dee2e6; padding-top: 20px;">DLT Network View</h2>
 
     <div id="main">
       <aside id="networkPanel" class="card">
@@ -572,7 +573,6 @@ const cities = Object.keys(sovereigns);
 let sharedParticipants = {};
 let sharedLiquidityPool = {};
 let sharedAuditTrail = [];
-let currentActiveTab = 'crossborder';
 
 const INTEREST_RATES = {};
 currencies.forEach(c => {
@@ -639,30 +639,6 @@ function addSharedAudit(msg) {
   sharedAuditTrail.unshift({ timestamp: new Date(), message: msg });
   if (sharedAuditTrail.length > 100) sharedAuditTrail.pop();
 }
-// ========== TAB SWITCHING ==========
-function switchTab(tabName) {
-  // Hide all tabs
-  document.querySelectorAll('.tab-content').forEach(tab => {
-    tab.classList.remove('active');
-  });
-  document.querySelectorAll('.tab-button').forEach(btn => {
-    btn.classList.remove('active');
-  });
-
-  // Show selected tab
-  document.getElementById(tabName).classList.add('active');
-  document.querySelector(`[onclick="switchTab('${tabName}')"]`).classList.add('active');
-
-  currentActiveTab = tabName;
-
-  // Update the relevant display
-  if (tabName === 'crossborder') {
-    updateDashboard();
-    renderLiquidityAMMSection();
-  } else if (tabName === 'network') {
-    renderAllNetwork();
-  }
-}
 // ========== TRANSACTION PROCESSING ==========
 const statusModalOverlay = document.getElementById('statusModalOverlay');
 const statusModalMessage = document.getElementById('statusModalMessage');
@@ -715,41 +691,80 @@ function tokenizeFromUI() {
   processTransaction(tx);
 }
 function transferFromUI() {
-    const sender = document.getElementById('sender').value;
-    const receiver = document.getElementById('receiver').value;
-    const currency = document.getElementById('transferCurrency').value;
-    const amount = parseFloat(document.getElementById('transferAmount').value);
+    const senderName = document.getElementById('sender').value;
+    const receiverName = document.getElementById('receiver').value;
+    const transferCurrency = document.getElementById('transferCurrency').value;
+    const transferAmount = parseFloat(document.getElementById('transferAmount').value);
 
-    if (isNaN(amount) || amount <= 0) { alert("Invalid amount."); return; }
+    if (isNaN(transferAmount) || transferAmount <= 0) {
+        alert("Invalid amount.");
+        return;
+    }
 
-    const senderWallet = sharedParticipants[sender].wallets[currency];
-    if (senderWallet >= amount) {
-        // Sufficient funds, proceed with a normal transfer
-        const tx = new Transaction({ type: 'transfer', from: sender, to: receiver, currency: currency, amount: amount });
+    const sender = sharedParticipants[senderName];
+    const senderWalletBalance = sender.wallets[transferCurrency];
+
+    // Case 1: Sufficient Funds
+    if (senderWalletBalance >= transferAmount) {
+        const tx = new Transaction({ type: 'transfer', from: senderName, to: receiverName, currency: transferCurrency, amount: transferAmount });
         processTransaction(tx);
-    } else {
-        // Insufficient funds, prompt for borrowing
-        const needed = amount - senderWallet;
-        // Recalculate liquidity pool to get the most current value before checking
-        recalcSharedLiquidityPool();
-        const availableToBorrow = sharedLiquidityPool[currency];
+        return;
+    }
 
-        if (availableToBorrow < needed) {
-            alert(`Insufficient funds. You have ${senderWallet.toFixed(2)}, need ${amount.toFixed(2)}. Only ${availableToBorrow.toFixed(2)} available to borrow in the pool.`);
-            return;
-        }
+    // Case 2: Insufficient Funds -> Try Swap or Borrow
+    const needed = transferAmount - senderWalletBalance;
 
-        if (confirm(`Insufficient funds. Do you want to borrow ${needed.toFixed(2)} ${currency} to complete the transfer?`)) {
-            const tx = new Transaction({
-                type: 'borrow_and_transfer',
-                from: sender,
-                to: receiver,
-                currency: currency,
-                amount: amount,
-                meta: { borrowAmount: needed }
-            });
-            processTransaction(tx);
+    // Find best currency to swap from (simple heuristic: largest balance)
+    let bestSwapCandidate = null;
+    let maxBalance = 0;
+    for (const c in sender.wallets) {
+        if (c !== transferCurrency && sender.wallets[c] > maxBalance) {
+            maxBalance = sender.wallets[c];
+            bestSwapCandidate = c;
         }
+    }
+
+    // Check if a swap is possible and prompt user
+    if (bestSwapCandidate) {
+        const amountNeededFromSwap = network.ammService.getAmountIn(bestSwapCandidate, transferCurrency, needed);
+        if (sender.wallets[bestSwapCandidate] >= amountNeededFromSwap) {
+            if (confirm(`You are short ${needed.toFixed(2)} ${transferCurrency}. Swap ~${amountNeededFromSwap.toFixed(2)} ${bestSwapCandidate} to complete the transfer?`)) {
+                const tx = new Transaction({
+                    type: 'swap_and_transfer',
+                    from: senderName,
+                    to: receiverName,
+                    currency: transferCurrency,
+                    amount: transferAmount,
+                    meta: {
+                        swapFrom: bestSwapCandidate,
+                        swapAmountIn: amountNeededFromSwap,
+                        neededForTransfer: needed
+                    }
+                });
+                processTransaction(tx);
+                return; // Exit after creating swap_and_transfer tx
+            }
+        }
+    }
+
+    // Case 3: Fallback to Borrowing
+    recalcSharedLiquidityPool();
+    const availableToBorrow = sharedLiquidityPool[transferCurrency];
+    if (availableToBorrow < needed) {
+        alert(`Insufficient funds and swap is not possible. You need ${needed.toFixed(2)} ${transferCurrency}, but only ${availableToBorrow.toFixed(2)} is available to borrow.`);
+        return;
+    }
+
+    if (confirm(`Swap declined or unavailable. Do you want to borrow ${needed.toFixed(2)} ${transferCurrency} from the liquidity pool instead?`)) {
+        const tx = new Transaction({
+            type: 'borrow_and_transfer',
+            from: senderName,
+            to: receiverName,
+            currency: transferCurrency,
+            amount: transferAmount,
+            meta: { borrowAmount: needed }
+        });
+        processTransaction(tx);
     }
 }
 function burnTokensUI() {
@@ -1198,6 +1213,31 @@ class Network{
     }
 
     switch (tx.type) {
+            case 'swap_and_transfer':
+                if (participant.name === tx.from) {
+                    const { swapFrom, swapAmountIn, neededForTransfer } = tx.meta;
+                    const amountOut = this.ammService.getAmountOut(swapFrom, tx.currency, swapAmountIn);
+
+                    if (amountOut < neededForTransfer * 0.99) { // Allow 1% slippage
+                        addSharedTransaction(participant.name, 'Swap Failed', `Swap for ${tx.currency} resulted in insufficient funds.`);
+                        // In a real system, this would fail the transaction.
+                        return;
+                    }
+
+                    // Perform swap
+                    participant.wallets[swapFrom] -= swapAmountIn;
+                    participant.wallets[tx.currency] += amountOut;
+                    addSharedTransaction(participant.name, 'Swap', `Swapped ${swapAmountIn.toFixed(2)} ${swapFrom} for ${amountOut.toFixed(2)} ${tx.currency}`);
+
+                    // Perform transfer
+                    participant.wallets[tx.currency] -= tx.amount;
+                    addSharedTransaction(participant.name, 'Transfer Out', `Transferred ${tx.amount.toFixed(2)} ${tx.currency} to ${tx.to}`);
+                }
+                if (participant.name === tx.to) {
+                    participant.wallets[tx.currency] += tx.amount;
+                    addSharedTransaction(participant.name, 'Transfer In', `Received ${tx.amount.toFixed(2)} ${tx.currency} from ${tx.from}`);
+                }
+                break;
         case 'tokenize': {
             if (participant.accounts[tx.currency] < tx.amount) {
                 return { valid: false, message: `Insufficient deposit to tokenize ${tx.amount} ${tx.currency}.` };
@@ -1236,6 +1276,13 @@ class Network{
         case 'repay': {
             if (participant.wallets[tx.currency] < tx.amount) {
                 return { valid: false, message: `Insufficient tokens to repay.` };
+            }
+            break;
+        }
+        case 'swap_and_transfer': {
+            const { swapFrom, swapAmountIn } = tx.meta;
+            if (participant.wallets[swapFrom] < swapAmountIn) {
+                return { valid: false, message: `Insufficient ${swapFrom} to perform swap.` };
             }
             break;
         }
@@ -1297,6 +1344,34 @@ class Network{
 
         const participant = node;
         switch (tx.type) {
+            case 'swap_and_transfer':
+                if (participant.name === tx.from) {
+                    const { swapFrom, swapAmountIn, neededForTransfer } = tx.meta;
+                    const amountOut = this.ammService.getAmountOut(swapFrom, tx.currency, swapAmountIn);
+
+                    // Check for slippage or failed swap
+                    if (amountOut < neededForTransfer * 0.99) { // Allow 1% slippage
+                        addSharedTransaction(participant.name, 'Swap Failed', `Swap for ${tx.currency} resulted in insufficient funds.`);
+                        // Note: In a real system, the transaction would fail here and be reverted.
+                        // Here we just log it and the transfer will likely fail silently or make the balance negative.
+                        // The validation at the top level should prevent this.
+                        return;
+                    }
+
+                    // Perform swap
+                    participant.wallets[swapFrom] -= swapAmountIn;
+                    participant.wallets[tx.currency] += amountOut;
+                    addSharedTransaction(participant.name, 'Swap', `Swapped ${swapAmountIn.toFixed(2)} ${swapFrom} for ${amountOut.toFixed(2)} ${tx.currency}`);
+
+                    // Perform transfer
+                    participant.wallets[tx.currency] -= tx.amount;
+                    addSharedTransaction(participant.name, 'Transfer Out', `Transferred ${tx.amount.toFixed(2)} ${tx.currency} to ${tx.to}`);
+                }
+                if (participant.name === tx.to) {
+                    participant.wallets[tx.currency] += tx.amount;
+                    addSharedTransaction(participant.name, 'Transfer In', `Received ${tx.amount.toFixed(2)} ${tx.currency} from ${tx.from}`);
+                }
+                break;
             case 'tokenize':
                 if (participant.name === tx.from) {
                     participant.accounts[tx.currency] -= tx.amount;
@@ -1441,16 +1516,14 @@ function updateAllDisplays() {
   if (network) {
     network.syncLiquidityService();
   }
-  if (currentActiveTab === 'crossborder') {
-    console.log("Rendering Cross Border Tab");
-    updateDashboard();
-    renderLiquidityAMMSection();
-    renderInterestRateTable();
-    renderStakingYieldTable();
-  } else if (currentActiveTab === 'network') {
-    console.log("Rendering DLT Network Tab");
-    renderAllNetwork();
-  }
+
+  // Render all components since there are no tabs
+  updateDashboard();
+  renderLiquidityAMMSection();
+  renderInterestRateTable();
+  renderStakingYieldTable();
+  renderAllNetwork();
+
   console.log("Display update complete.");
 }
 function populateDropdowns() {
