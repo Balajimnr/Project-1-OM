@@ -389,7 +389,7 @@
 <body>
 <div class="tab-container">
   <div class="tab-header">
-    <button class="tab-button active" onclick="switchTab('crossborder')">Cross Border Transfer</button>
+    <button class="tab-button active" onclick="switchTab('crossborder')">Tokenised Business Services</button>
     <button class="tab-button" onclick="switchTab('network')">DLT Network</button>
   </div>
 
@@ -444,6 +444,7 @@
       <div class="menu-item" role="group" aria-label="Post interest on borrowed funds">
         <label for="interestFrequency">Interest freq:</label>
         <select id="interestFrequency" aria-label="Interest posting frequency" style="min-width: 110px;">
+          <option value="hour">Hourly</option>
           <option value="day">Daily</option>
           <option value="week">Weekly</option>
           <option value="month" selected>Monthly</option>
@@ -482,6 +483,37 @@
         <div id="ammRatesList" aria-live="polite" style="margin-top: 10px; font-size: 0.9rem; color: #0d47a1;"></div>
       </section>
     </div>
+
+    <!-- Detailed Tables -->
+    <div id="detailedTablesWrapper" style="display:flex;gap:40px;margin-bottom:30px;flex-wrap:wrap">
+      <section id="liquidityTableSection" style="flex:1;min-width:300px" class="dashboard-section">
+        <h3>Liquidity Pool Details</h3>
+        <table style="margin-top:8px;width:100%"><thead><tr><th>Currency</th><th>Total Pool</th></tr></thead><tbody id="liqTable"></tbody></table>
+      </section>
+      <section id="ammTableSection" style="flex:1;min-width:300px" class="dashboard-section">
+        <h3>AMM Rate Details</h3>
+        <div id="ammRates" style="margin-top:8px"></div>
+      </section>
+    </div>
+
+    <!-- Interest Rate Table -->
+    <div id="interestRateWrapper">
+        <section class="dashboard-section">
+            <h3>Interest Rates (Credit/Debit)</h3>
+            <table id="interestRateTable" style="width:100%; margin-top:8px;">
+                <thead>
+                    <tr>
+                        <th>Currency</th>
+                        <th>Credit Rate</th>
+                        <th>Debit Rate</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <!-- Will be populated by JavaScript -->
+                </tbody>
+            </table>
+        </section>
+    </div>
   </div>
   <!-- DLT Network Tab -->
   <div id="network" class="tab-content">
@@ -500,21 +532,6 @@
         <section class="card">
           <h3 style="margin:0">Nodes & Wallets</h3>
           <div id="nodesGrid"></div>
-        </section>
-        <section class="card">
-          <h3 style="margin:0">Services</h3>
-          <div style="display:flex;gap:12px;margin-top:8px;flex-wrap:wrap">
-            <div style="flex:1;min-width:300px">
-              <strong>Liquidity Pool Service</strong>
-              <div class="muted">Total per-currency pool and API to borrow/repay</div>
-              <table style="margin-top:8px"><thead><tr><th>Currency</th><th>Pool</th></tr></thead><tbody id="liqTable"></tbody></table>
-            </div>
-            <div style="flex:1;min-width:300px">
-              <strong>AMM Service</strong>
-              <div class="muted">Constant-product AMM using liquidity pool balances</div>
-              <div id="ammRates" style="margin-top:8px"></div>
-            </div>
-          </div>
         </section>
       </main>
     </div>
@@ -807,11 +824,18 @@ function postInterest() {
       if(borrowed.amount <= 0) return;
       const lastPost = borrowed.lastInterestPostDate || now;
       const diffMs = now - lastPost;
-      const diffDays = Math.floor(diffMs / (1000 * 60 * 60 * 24));
       let periods = 0;
-      if(freq === 'day') periods = diffDays;
-      else if(freq === 'week') periods = Math.floor(diffDays / 7);
-      else if(freq === 'month') periods = Math.floor(diffDays / 30);
+
+      if(freq === 'hour') {
+          const diffHours = Math.floor(diffMs / (1000 * 60 * 60));
+          periods = diffHours;
+      } else {
+          const diffDays = Math.floor(diffMs / (1000 * 60 * 60 * 24));
+          if(freq === 'day') periods = diffDays;
+          else if(freq === 'week') periods = Math.floor(diffDays / 7);
+          else if(freq === 'month') periods = Math.floor(diffDays / 30);
+      }
+
       if(periods <= 0) return;
       const debitRate = INTEREST_RATES[c].debit;
       const interest = borrowed.amount * debitRate * periods;
@@ -1436,6 +1460,35 @@ function filterAuditTable() {
     row.style.display = txt.includes(filter) ? '' : 'none';
   });
 }
+
+function renderInterestRateTable() {
+    const tableBody = document.getElementById('interestRateTable').querySelector('tbody');
+    tableBody.innerHTML = ''; // Clear existing rows
+
+    for (const currency in INTEREST_RATES) {
+        const rates = INTEREST_RATES[currency];
+        const row = document.createElement('tr');
+
+        row.innerHTML = `
+            <td>${currency}</td>
+            <td><input type="number" value="${rates.credit}" step="0.0001" onchange="updateInterestRate('${currency}', 'credit', this.value)" style="width: 100px;"></td>
+            <td><input type="number" value="${rates.debit}" step="0.0001" onchange="updateInterestRate('${currency}', 'debit', this.value)" style="width: 100px;"></td>
+        `;
+        tableBody.appendChild(row);
+    }
+}
+
+function updateInterestRate(currency, type, value) {
+    const rate = parseFloat(value);
+    if (!isNaN(rate) && rate >= 0) {
+        INTEREST_RATES[currency][type] = rate;
+        addSharedAudit(`Updated ${currency} ${type} interest rate to ${rate}.`);
+    } else {
+        alert('Invalid interest rate. Please enter a non-negative number.');
+        renderInterestRateTable(); // Re-render to show the old value
+    }
+}
+
 // ========== INITIALIZATION ==========
 function initializeSystem() {
   console.log("1. Starting system initialization...");
@@ -1449,6 +1502,7 @@ function initializeSystem() {
   console.log("5. Dashboard updated.");
   renderLiquidityAMMSection();
   console.log("6. Liquidity/AMM section rendered.");
+  renderInterestRateTable();
   renderAllNetwork();
   console.log("7. Full network rendered. Initialization complete.");
 }
