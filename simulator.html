@@ -1,0 +1,1482 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<title>Integrated DLT System - Cross Border Transfer & Network Consensus</title>
+<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+<style>
+  body {
+    font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+    margin: 0;
+    padding: 20px;
+    background: linear-gradient(135deg, #f0f4f8, #d9e2ec);
+    color: #2c3e50;
+  }
+
+  .tab-container {
+    background: #fff;
+    border-radius: 8px;
+    box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+    overflow: hidden;
+    margin-bottom: 20px;
+  }
+
+  .tab-header {
+    display: flex;
+    background: #f8f9fa;
+    border-bottom: 1px solid #dee2e6;
+  }
+
+  .tab-button {
+    flex: 1;
+    padding: 15px 20px;
+    background: none;
+    border: none;
+    cursor: pointer;
+    font-size: 16px;
+    font-weight: 600;
+    color: #6c757d;
+    transition: all 0.3s ease;
+  }
+
+  .tab-button.active {
+    background: #1976d2;
+    color: white;
+  }
+
+  .tab-button:hover {
+    background: #e9ecef;
+  }
+
+  .tab-button.active:hover {
+    background: #1565c0;
+  }
+
+  .tab-content {
+    display: none;
+    padding: 20px;
+  }
+
+  .tab-content.active {
+    display: block;
+  }
+
+  /* Cross Border Transfer Styles */
+  h2 {
+    color: #1976d2;
+    margin-bottom: 10px;
+    margin-top: 0;
+  }
+
+  .menu-bar {
+    display: flex;
+    gap: 20px;
+    flex-wrap: wrap;
+    background: #fff;
+    padding: 12px 20px;
+    border-radius: 8px;
+    box-shadow: 0 1px 5px rgba(0,0,0,0.1);
+    margin-bottom: 25px;
+  }
+
+  .menu-item {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
+
+  select, input[type=number] {
+    padding: 5px 8px;
+    font-size: 1rem;
+    border-radius: 4px;
+    border: 1px solid #ccc;
+    min-width: 110px;
+  }
+
+  input[type=number] {
+    max-width: 110px;
+  }
+
+  button {
+    background-color: #1976d2;
+    border: none;
+    color: white;
+    padding: 6px 14px;
+    font-size: 1rem;
+    border-radius: 4px;
+    cursor: pointer;
+    transition: background-color 0.25s ease;
+    white-space: nowrap;
+  }
+
+  button:hover {
+    background-color: #115293;
+  }
+
+  #dashboard {
+    display: flex;
+    gap: 25px;
+    margin-bottom: 30px;
+    flex-wrap: wrap;
+  }
+
+  .dashboard-section {
+    background: #fff;
+    box-shadow: 0 2px 10px rgba(0,0,0,0.05);
+    padding: 15px 20px;
+    border-radius: 8px;
+    flex: 1;
+    min-width: 300px;
+  }
+
+  .dashboard-section h3 {
+    margin-top: 0;
+    color: #0d47a1;
+    margin-bottom: 15px;
+  }
+
+  .expandable {
+    cursor: pointer;
+    color: #1976d2;
+    margin-left: 8px;
+    user-select: none;
+  }
+
+  .hidden {
+    display: none;
+  }
+
+  .dashboard-section div a {
+    color: #1976d2;
+    text-decoration: none;
+    cursor: pointer;
+  }
+
+  .dashboard-section div a:hover {
+    text-decoration: underline;
+  }
+
+  #ammLiquidityWrapper {
+    display: flex;
+    gap: 40px;
+    margin-bottom: 30px;
+    flex-wrap: wrap;
+  }
+
+  #liquiditySection, #ammSection {
+    flex: 1;
+    background: #fff;
+    box-shadow: 0 2px 10px rgba(0,0,0,0.05);
+    padding: 20px;
+    border-radius: 8px;
+    min-width: 300px;
+  }
+
+  #liquiditySection h3, #ammSection h3 {
+    margin-top: 0;
+    color: #0d47a1;
+    margin-bottom: 10px;
+  }
+
+  #liquidityChart {
+    max-width: 100%;
+    height: 300px;
+  }
+
+  #ammRatesList {
+    font-size: 0.9rem;
+    color: #0d47a1;
+    line-height: 1.5;
+    margin-top: 8px;
+  }
+
+  label {
+    font-weight: 600;
+    margin-right: 6px;
+  }
+
+  /* DLT Network Styles */
+  .topbar {
+    display: flex;
+    gap: 14px;
+    align-items: center;
+    margin: 12px 0;
+  }
+
+  .menu-bar-network {
+    display: flex;
+    gap: 12px;
+    flex-wrap: wrap;
+    background: #fff;
+    padding: 12px;
+    border-radius: 10px;
+    box-shadow: 0 1px 6px rgba(20,40,80,0.06);
+  }
+
+  #main {
+    display: grid;
+    grid-template-columns: 360px 1fr;
+    gap: 18px;
+    margin-top: 18px;
+  }
+
+  #networkPanel {
+    background: #fff;
+    padding: 12px;
+    border-radius: 10px;
+    box-shadow: 0 2px 10px rgba(20,40,80,0.05);
+  }
+
+  #networkCanvas {
+    width: 320px;
+    height: 360px;
+    border-radius: 8px;
+    background: linear-gradient(180deg,#eef7ff,#ffffff);
+    display: block;
+  }
+
+  .nodeItem {
+    display: flex;
+    justify-content: space-between;
+    padding: 6px 0;
+    border-bottom: 1px dashed #edf5fb;
+  }
+
+  .nodeItem:last-child {
+    border-bottom: none;
+  }
+
+  .nodeBadge {
+    font-weight: 700;
+  }
+
+  #dashboard-network {
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+  }
+
+  .card {
+    background: #fff;
+    padding: 12px;
+    border-radius: 10px;
+    box-shadow: 0 2px 8px rgba(20,40,80,0.04);
+  }
+
+  #nodesGrid {
+    display: flex;
+    gap: 10px;
+    flex-wrap: wrap;
+  }
+
+  .nodeCard {
+    min-width: 140px;
+    padding: 10px;
+    border-radius: 8px;
+    background: linear-gradient(180deg,#fff,#f6fbff);
+    border: 1px solid #e6f0fb;
+  }
+
+  .mini {
+    font-size: 0.9rem;
+    color: #235a9a;
+  }
+
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 0.9rem;
+  }
+
+  table th, table td {
+    border: 1px solid #ddd;
+    padding: 8px 10px;
+    text-align: left;
+  }
+
+  table th {
+    background: #e3f2fd;
+    color: #0d47a1;
+  }
+
+  .muted {
+    color: #667d9a;
+    font-size: 0.9rem;
+  }
+
+  #transactionsList {
+    max-height: 260px;
+    overflow: auto;
+  }
+
+  /* Modal Styles */
+  #modalOverlay, #auditModalOverlay {
+    position: fixed;
+    top: 0; left: 0; right: 0; bottom: 0;
+    background: rgba(0,0,0,0.3);
+    display: none;
+    justify-content: center;
+    align-items: center;
+    z-index: 9999;
+  }
+
+  #modal, #auditModal {
+    background: white;
+    border-radius: 8px;
+    max-width: 800px;
+    width: 95%;
+    max-height: 70vh;
+    overflow-y: auto;
+    box-shadow: 0 4px 12px rgba(0,0,0,0.3);
+    padding: 20px;
+    position: relative;
+  }
+
+  #modalClose, #auditModalClose {
+    position: absolute;
+    top: 15px;
+    right: 20px;
+    font-size: 1.5rem;
+    cursor: pointer;
+    color: #999;
+  }
+
+  #modalClose:hover, #auditModalClose:hover {
+    color: #444;
+  }
+
+  #modalSearch, #auditSearch {
+    margin-bottom: 15px;
+    padding: 6px 8px;
+    width: 100%;
+    font-size: 1rem;
+    border-radius: 4px;
+    border: 1px solid #ccc;
+  }
+
+  @media (max-width: 768px) {
+    #main {
+      grid-template-columns: 1fr;
+    }
+    .menu-bar {
+      flex-direction: column;
+      gap: 10px;
+    }
+    #dashboard, #ammLiquidityWrapper {
+      flex-direction: column;
+    }
+  }
+</style>
+</head>
+<body>
+<div class="tab-container">
+  <div class="tab-header">
+    <button class="tab-button active" onclick="switchTab('crossborder')">Cross Border Transfer</button>
+    <button class="tab-button" onclick="switchTab('network')">DLT Network</button>
+  </div>
+
+  <!-- Cross Border Transfer Tab -->
+  <div id="crossborder" class="tab-content active">
+    <h2>Cross Border Transfer & Wallet Management</h2>
+    <div class="menu-bar" aria-label="Function controls menu">
+      <!-- Tokenize -->
+      <div class="menu-item" role="group" aria-label="Tokenize funds">
+        <label for="tokenizeParticipant">Tokenize:</label>
+        <select id="tokenizeParticipant" aria-label="Participant for tokenizing funds"></select>
+        <select id="tokenizeCurrency" aria-label="Currency to tokenize"></select>
+        <input type="number" id="tokenizeAmount" placeholder="Amount" min="0" step="any" aria-label="Amount to tokenize" />
+        <button onclick="tokenizeFromUI()">Go</button>
+      </div>
+      <!-- Transfer -->
+      <div class="menu-item" role="group" aria-label="Transfer tokens">
+        <label for="sender">Send:</label>
+        <select id="sender" aria-label="Sender participant"></select>
+        <label for="receiver">To:</label>
+        <select id="receiver" aria-label="Receiver participant"></select>
+        <select id="transferCurrency" aria-label="Currency to transfer"></select>
+        <input type="number" id="transferAmount" placeholder="Amount" min="0" step="any" aria-label="Amount to transfer" />
+        <button onclick="transferFromUI()">Go</button>
+      </div>
+      <!-- Burn -->
+      <div class="menu-item" role="group" aria-label="Burn tokens">
+        <label for="burnParticipant">Burn:</label>
+        <select id="burnParticipant" aria-label="Participant for burning tokens"></select>
+        <select id="burnCurrency" aria-label="Currency to burn"></select>
+        <input type="number" id="burnAmount" placeholder="Amount" min="0" step="any" aria-label="Amount to burn" />
+        <button onclick="burnTokensUI()">Go</button>
+      </div>
+      <!-- AMM Swap -->
+      <div class="menu-item" role="group" aria-label="Cross currency swap">
+        <label for="ammParticipant">Swap:</label>
+        <select id="ammParticipant" aria-label="Participant for currency swap"></select>
+        <select id="ammFromCurrency" aria-label="Currency to swap from"></select>
+        <select id="ammToCurrency" aria-label="Currency to swap to"></select>
+        <input type="number" id="ammAmount" placeholder="Amount" min="0" step="any" aria-label="Amount to swap" />
+        <button onclick="crossCurrencyTransfer()">Go</button>
+      </div>
+      <!-- Repay Borrowed -->
+      <div class="menu-item" role="group" aria-label="Repay borrowed funds">
+        <label for="repayParticipant">Repay:</label>
+        <select id="repayParticipant" aria-label="Participant repaying borrowed funds"></select>
+        <select id="repayCurrency" aria-label="Currency to repay"></select>
+        <input type="number" id="repayAmount" placeholder="Amount" min="0" step="any" aria-label="Amount to repay" />
+        <button onclick="repayBorrowedUI()">Go</button>
+      </div>
+      <!-- Interest Posting -->
+      <div class="menu-item" role="group" aria-label="Post interest on borrowed funds">
+        <label for="interestFrequency">Interest freq:</label>
+        <select id="interestFrequency" aria-label="Interest posting frequency" style="min-width: 110px;">
+          <option value="day">Daily</option>
+          <option value="week">Weekly</option>
+          <option value="month" selected>Monthly</option>
+        </select>
+        <button onclick="postInterest()">Post Now</button>
+      </div>
+      <!-- Audit Trail -->
+      <div class="menu-item" role="group" aria-label="Open audit trail modal" style="margin-left:auto;">
+        <button onclick="openAuditModal()">Audit Trail</button>
+      </div>
+    </div>
+    <!-- Dashboard: Accounts, Wallets, Loans side by side -->
+    <div id="dashboard" role="region" aria-label="Dashboard showing accounts, wallets and loans summary">
+      <div class="dashboard-section" id="accountsSection" tabindex="0" aria-label="Accounts section">
+        <h3>Accounts (Deposits)</h3>
+      </div>
+      <div class="dashboard-section" id="walletsSection" tabindex="0" aria-label="Wallets section">
+        <h3>Wallets (Tokens)</h3>
+      </div>
+      <div class="dashboard-section" id="loansSection" tabindex="0" aria-label="Loan accounts section">
+        <h3>Loan Accounts</h3>
+      </div>
+    </div>
+    <!-- Liquidity & AMM side by side -->
+    <div id="ammLiquidityWrapper" aria-label="Liquidity Pool and AMM rates section">
+      <section id="liquiditySection" tabindex="0" aria-label="Liquidity Pool balances">
+        <h3>Liquidity Pool</h3>
+        <label for="liquidityCurrency">Currency:</label>
+        <select id="liquidityCurrency" onchange="renderLiquidityAMMSection()" aria-label="Select currency for liquidity pool display"></select>
+        <canvas id="liquidityChart" width="900" height="400" aria-label="Liquidity pool chart"></canvas>
+      </section>
+      <section id="ammSection" tabindex="0" aria-label="Automated Market Maker rates">
+        <h3>AMM Rates</h3>
+        <label for="ammCurrency">Currency:</label>
+        <select id="ammCurrency" onchange="renderAMMRatesSection()" aria-label="Select currency for AMM rates display"></select>
+        <div id="ammRatesList" aria-live="polite" style="margin-top: 10px; font-size: 0.9rem; color: #0d47a1;"></div>
+      </section>
+    </div>
+  </div>
+  <!-- DLT Network Tab -->
+  <div id="network" class="tab-content">
+    <h2>DLT Network '97 Nodes, Wallets, Liquidity & AMM Services (with Consensus)</h2>
+
+    <div class="topbar">
+      <div class="menu-bar-network" role="toolbar">
+        <label>From:</label><select id="ui_sender"></select>
+        <label>To:</label><select id="ui_receiver"></select>
+        <label>Currency:</label><select id="ui_currency"></select>
+        <input id="ui_amount" type="number" placeholder="Amount" />
+        <button onclick="uiTransfer()">Transfer</button>
+        <button onclick="uiTokenize()">Tokenize</button>
+        <button onclick="uiSwap()">AMM Swap</button>
+        <button onclick="runConsensusRound()">Consensus Round</button>
+        <button onclick="syncAllNodes()">Sync Nodes</button>
+      </div>
+    </div>
+    <div id="main">
+      <aside id="networkPanel" class="card">
+        <h3 style="margin-top:0">Network Map</h3>
+        <canvas id="networkCanvas"></canvas>
+        <div style="margin-top:8px">
+          <strong>Nodes</strong>
+          <div id="nodesList"></div>
+        </div>
+      </aside>
+      <main id="dashboard-network">
+        <section class="card">
+          <h3 style="margin:0">Nodes & Wallets</h3>
+          <div id="nodesGrid"></div>
+        </section>
+        <section class="card">
+          <h3 style="margin:0">Services</h3>
+          <div style="display:flex;gap:12px;margin-top:8px;flex-wrap:wrap">
+            <div style="flex:1;min-width:300px">
+              <strong>Liquidity Pool Service</strong>
+              <div class="muted">Total per-currency pool and API to borrow/repay</div>
+              <table style="margin-top:8px"><thead><tr><th>Currency</th><th>Pool</th></tr></thead><tbody id="liqTable"></tbody></table>
+            </div>
+            <div style="flex:1;min-width:300px">
+              <strong>AMM Service</strong>
+              <div class="muted">Constant-product AMM using liquidity pool balances</div>
+              <div id="ammRates" style="margin-top:8px"></div>
+            </div>
+          </div>
+        </section>
+        <section class="card">
+          <h3 style="margin:0">Transactions & Audit</h3>
+          <div id="transactionsList"></div>
+        </section>
+      </main>
+    </div>
+  </div>
+</div>
+<!-- Modals -->
+<!-- Transactions / History Modal -->
+<div id="modalOverlay" role="dialog" aria-modal="true" aria-labelledby="modalTitle" aria-describedby="modalSearch">
+  <div id="modal">
+    <span id="modalClose" onclick="closeModal()" role="button" tabindex="0" aria-label="Close modal">&times;</span>
+    <h4 id="modalTitle"></h4>
+    <input type="text" id="modalSearch" placeholder="Search..." oninput="filterModalTable()" aria-label="Search transactions" />
+    <table id="modalTable" role="table" aria-describedby="modalTitle">
+      <thead><tr><th>Date</th><th>Type</th><th>Details</th></tr></thead>
+      <tbody></tbody>
+    </table>
+  </div>
+</div>
+<!-- Audit Trail Modal -->
+<div id="auditModalOverlay" role="dialog" aria-modal="true" aria-labelledby="auditModalTitle" aria-describedby="auditSearch">
+  <div id="auditModal">
+    <span id="auditModalClose" onclick="closeAuditModal()" role="button" tabindex="0" aria-label="Close audit modal">&times;</span>
+    <h4 id="auditModalTitle">Audit Trail</h4>
+    <input type="text" id="auditSearch" placeholder="Search audit..." oninput="filterAuditTable()" aria-label="Search audit trail" />
+    <table id="auditTable" role="table" aria-describedby="auditModalTitle">
+      <thead><tr><th>Date</th><th>Message</th></tr></thead>
+      <tbody></tbody>
+    </table>
+  </div>
+</div>
+<script>
+// ========== SHARED CONFIGURATION ==========
+const currencies = ['USD', 'AUD', 'JPY', 'SGD', 'HKD', 'GBP', 'EUR', 'CAD', 'CHF', 'NZD'];
+const sovereigns = {
+  'Sydney': 'AUD',
+  'Tokyo': 'JPY',
+  'Singapore': 'SGD',
+  'Hong Kong': 'HKD',
+  'Dubai': 'USD',
+  'London': 'GBP',
+  'New York': 'USD'
+};
+const cities = Object.keys(sovereigns);
+// ========== SHARED DATA STRUCTURES ==========
+let sharedParticipants = {};
+let sharedLiquidityPool = {};
+let sharedAuditTrail = [];
+let currentActiveTab = 'crossborder';
+// Interest rates (per period)
+const INTEREST_RATES = {};
+currencies.forEach(c => {
+  INTEREST_RATES[c] = { credit: 0.0001, debit: 0.0009 };
+});
+// ========== SHARED WALLET SYSTEM ==========
+function initializeSharedSystem() {
+  sharedParticipants = {};
+  sharedLiquidityPool = {};
+  sharedAuditTrail = [];
+  currencies.forEach(c => sharedLiquidityPool[c] = 0);
+  cities.forEach(city => {
+    sharedParticipants[city] = {
+      accounts: {},
+      wallets: {},
+      loans: {},
+      borrowed: {},
+      transactions: [],
+      // Network-specific properties
+      mempool: [],
+      chain: []
+    };
+    currencies.forEach(c => {
+      sharedParticipants[city].accounts[c] = 1000000;
+      sharedParticipants[city].wallets[c] = 0;
+      sharedParticipants[city].loans[c] = 0;
+      sharedParticipants[city].borrowed[c] = { amount: 0, lastInterestPostDate: new Date() };
+    });
+  });
+  recalcSharedLiquidityPool();
+}
+function recalcSharedLiquidityPool() {
+  currencies.forEach(c => sharedLiquidityPool[c] = 0);
+  cities.forEach(city => {
+    currencies.forEach(c => {
+      sharedLiquidityPool[c] += sharedParticipants[city].wallets[c];
+    });
+  });
+}
+function addSharedTransaction(city, type, details) {
+  const tx = {
+    timestamp: new Date(),
+    type,
+    details
+  };
+  sharedParticipants[city].transactions.unshift(tx);
+}
+function addSharedAudit(msg) {
+  sharedAuditTrail.unshift({ timestamp: new Date(), message: msg });
+  if (sharedAuditTrail.length > 100) sharedAuditTrail.pop();
+}
+// ========== TAB SWITCHING ==========
+function switchTab(tabName) {
+  // Hide all tabs
+  document.querySelectorAll('.tab-content').forEach(tab => {
+    tab.classList.remove('active');
+  });
+  document.querySelectorAll('.tab-button').forEach(btn => {
+    btn.classList.remove('active');
+  });
+
+  // Show selected tab
+  document.getElementById(tabName).classList.add('active');
+  document.querySelector(`[onclick="switchTab('${tabName}')"]`).classList.add('active');
+
+  currentActiveTab = tabName;
+
+  // Update the relevant display
+  if (tabName === 'crossborder') {
+    updateDashboard();
+    renderLiquidityAMMSection();
+  } else if (tabName === 'network') {
+    renderAllNetwork();
+  }
+}
+// ========== CROSS BORDER TRANSFER FUNCTIONS ==========
+// AMM logic - Simple constant product AMM: x * y = k
+function getAMMRates(fromCurrency) {
+  const poolBalances = {...sharedLiquidityPool};
+  const results = {};
+  currencies.forEach(toCurrency => {
+    if(toCurrency === fromCurrency) return;
+    const x = poolBalances[fromCurrency];
+    const y = poolBalances[toCurrency];
+    if(x <= 0 || y <= 0) {
+      results[toCurrency] = 0;
+      return;
+    }
+    const inputAmount = 1;
+    const inputAmountWithFee = inputAmount * 0.997;
+    const k = x * y;
+    const newX = x + inputAmountWithFee;
+    const newY = k / newX;
+    const outputAmount = y - newY;
+    results[toCurrency] = outputAmount;
+  });
+  return results;
+}
+function ammConvert(city, fromCurrency, toCurrency, amount) {
+  if(amount <= 0) return alert("Invalid swap amount.");
+  if(!currencies.includes(fromCurrency) || !currencies.includes(toCurrency)) return alert("Invalid currency.");
+  const fromBal = sharedParticipants[city].wallets[fromCurrency];
+  if(fromBal < amount) return alert(`Insufficient ${fromCurrency} tokens to swap.`);
+  const poolFrom = sharedLiquidityPool[fromCurrency];
+  const poolTo = sharedLiquidityPool[toCurrency];
+  if(poolFrom <= 0 || poolTo <= 0) return alert("Liquidity pool insufficient.");
+  const amountInWithFee = amount * 0.997;
+  const k = poolFrom * poolTo;
+  const newPoolFrom = poolFrom + amountInWithFee;
+  const newPoolTo = k / newPoolFrom;
+  const amountOut = poolTo - newPoolTo;
+  if(amountOut <= 0) return alert("Swap would result in zero output.");
+  sharedParticipants[city].wallets[fromCurrency] -= amount;
+  sharedParticipants[city].wallets[toCurrency] += amountOut;
+  addSharedAudit(`${city} swapped ${amount.toFixed(2)} ${fromCurrency} to ${amountOut.toFixed(2)} ${toCurrency} via AMM.`);
+  addSharedTransaction(city, 'Swap', `Swapped ${amount.toFixed(2)} ${fromCurrency} to ${amountOut.toFixed(2)} ${toCurrency}`);
+  updateAllDisplays();
+}
+function borrowFunds(city, currency, amount) {
+  if(amount <= 0) return;
+  if(sharedLiquidityPool[currency] < amount) return alert(`Liquidity pool insufficient for borrowing ${amount.toFixed(2)} ${currency}.`);
+  sharedParticipants[city].wallets[currency] += amount;
+  sharedParticipants[city].loans[currency] += amount;
+  sharedParticipants[city].borrowed[currency].amount += amount;
+  if(!sharedParticipants[city].borrowed[currency].lastInterestPostDate) {
+    sharedParticipants[city].borrowed[currency].lastInterestPostDate = new Date();
+  }
+  addSharedAudit(`${city} borrowed ${amount.toFixed(2)} ${currency} from liquidity pool.`);
+  addSharedTransaction(city, 'Borrow', `Borrowed ${amount.toFixed(2)} ${currency}`);
+}
+function transferWithBorrowOption(sender, receiver, currency, amount) {
+  if(amount <= 0) return alert("Invalid amount.");
+  const senderBalance = sharedParticipants[sender].wallets[currency];
+  const totalWalletBalance = currencies.reduce((acc,c) => acc + sharedParticipants[sender].wallets[c], 0);
+  if(senderBalance >= amount) {
+    // Direct transfer
+    sharedParticipants[sender].wallets[currency] -= amount;
+    sharedParticipants[receiver].wallets[currency] += amount;
+    addSharedAudit(`${sender} transferred ${amount.toFixed(2)} ${currency} to ${receiver}.`);
+    addSharedTransaction(sender, 'Transfer Out', `Transferred ${amount.toFixed(2)} ${currency} to ${receiver}`);
+    addSharedTransaction(receiver, 'Transfer In', `Received ${amount.toFixed(2)} ${currency} from ${sender}`);
+    updateAllDisplays();
+  } else if(totalWalletBalance >= amount) {
+    const wantsSwap = confirm(
+      `Insufficient ${currency} tokens.\nYou can swap from other currencies via AMM or borrow from liquidity pool.\n` +
+      `Press OK to swap or Cancel to borrow.`
+    );
+    if(wantsSwap) {
+      let fromCurrency = prompt(`Enter currency to swap from (Available balances):\n` +
+        currencies.filter(c => sharedParticipants[sender].wallets[c] > 0).map(c => `${c}: ${sharedParticipants[sender].wallets[c].toFixed(2)}`).join('\n'));
+      if(!fromCurrency || !currencies.includes(fromCurrency)) {
+        alert('Invalid currency for swap.');
+        return;
+      }
+      if(sharedParticipants[sender].wallets[fromCurrency] < amount) {
+        alert(`Insufficient ${fromCurrency} tokens to swap.`);
+        return;
+      }
+      ammConvert(sender, fromCurrency, currency, amount);
+      // Transfer after swap
+      sharedParticipants[sender].wallets[currency] -= amount;
+      sharedParticipants[receiver].wallets[currency] += amount;
+      addSharedAudit(`${sender} transferred ${amount.toFixed(2)} ${currency} tokens to ${receiver} after AMM swap.`);
+      addSharedTransaction(sender, 'Transfer Out', `Transferred ${amount.toFixed(2)} ${currency} to ${receiver} after swap`);
+      addSharedTransaction(receiver, 'Transfer In', `Received ${amount.toFixed(2)} ${currency} from ${sender}`);
+      updateAllDisplays();
+    } else {
+      // Borrow missing amount
+      const missing = amount - senderBalance;
+      borrowFunds(sender, currency, missing);
+      sharedParticipants[sender].wallets[currency] -= amount;
+      sharedParticipants[receiver].wallets[currency] += amount;
+      addSharedAudit(`${sender} transferred ${amount.toFixed(2)} ${currency} tokens to ${receiver} after borrowing.`);
+      addSharedTransaction(sender, 'Transfer Out', `Transferred ${amount.toFixed(2)} ${currency} to ${receiver} after borrowing`);
+      addSharedTransaction(receiver, 'Transfer In', `Received ${amount.toFixed(2)} ${currency} from ${sender}`);
+      updateAllDisplays();
+    }
+  } else {
+    // Not enough funds in any currency, borrow full missing amount
+    const missing = amount - senderBalance;
+    borrowFunds(sender, currency, missing);
+    sharedParticipants[sender].wallets[currency] -= amount;
+    sharedParticipants[receiver].wallets[currency] += amount;
+    addSharedAudit(`${sender} transferred ${amount.toFixed(2)} ${currency} tokens to ${receiver} after full borrowing.`);
+    addSharedTransaction(sender, 'Transfer Out', `Transferred ${amount.toFixed(2)} ${currency} to ${receiver} after full borrowing`);
+    addSharedTransaction(receiver, 'Transfer In', `Received ${amount.toFixed(2)} ${currency} from ${sender}`);
+    updateAllDisplays();
+  }
+}
+function repayBorrowed(city, currency, amount) {
+  if(amount <= 0) return alert("Invalid repay amount.");
+  if(sharedParticipants[city].borrowed[currency].amount <= 0) return alert("No borrowed amount to repay.");
+  if(sharedParticipants[city].wallets[currency] < amount) return alert(`Insufficient ${currency} tokens in wallet to repay.`);
+  let repayAmount = Math.min(amount, sharedParticipants[city].borrowed[currency].amount);
+  sharedParticipants[city].wallets[currency] -= repayAmount;
+  sharedParticipants[city].borrowed[currency].amount -= repayAmount;
+  sharedParticipants[city].loans[currency] -= repayAmount;
+  if(sharedParticipants[city].borrowed[currency].amount <= 0) {
+    sharedParticipants[city].borrowed[currency].amount = 0;
+    sharedParticipants[city].borrowed[currency].lastInterestPostDate = new Date();
+  }
+  addSharedAudit(`${city} repaid ${repayAmount.toFixed(2)} ${currency} to liquidity pool.`);
+  addSharedTransaction(city, 'Repay', `Repaid ${repayAmount.toFixed(2)} ${currency}`);
+  updateAllDisplays();
+}
+// UI Functions for Cross Border Transfer
+function tokenizeFromUI() {
+  const participant = document.getElementById('tokenizeParticipant').value;
+  const currency = document.getElementById('tokenizeCurrency').value;
+  const amount = parseFloat(document.getElementById('tokenizeAmount').value);
+  if(isNaN(amount) || amount <= 0) return alert("Invalid amount.");
+  if(sharedParticipants[participant].accounts[currency] < amount) return alert(`Insufficient deposits in account to tokenize.`);
+  sharedParticipants[participant].accounts[currency] -= amount;
+  sharedParticipants[participant].wallets[currency] += amount;
+  addSharedAudit(`${participant} tokenized ${amount.toFixed(2)} ${currency} into wallet.`);
+  addSharedTransaction(participant, 'Tokenize', `Tokenized ${amount.toFixed(2)} ${currency}`);
+  updateAllDisplays();
+}
+function transferFromUI() {
+  const sender = document.getElementById('sender').value;
+  const receiver = document.getElementById('receiver').value;
+  const currency = document.getElementById('transferCurrency').value;
+  const amount = parseFloat(document.getElementById('transferAmount').value);
+  if(isNaN(amount) || amount <= 0) return alert("Invalid amount.");
+  transferWithBorrowOption(sender, receiver, currency, amount);
+}
+function burnTokensUI() {
+  const participant = document.getElementById('burnParticipant').value;
+  const currency = document.getElementById('burnCurrency').value;
+  const amount = parseFloat(document.getElementById('burnAmount').value);
+  if(isNaN(amount) || amount <= 0) return alert("Invalid amount.");
+  if(sharedParticipants[participant].wallets[currency] < amount) return alert("Insufficient tokens to burn.");
+  sharedParticipants[participant].wallets[currency] -= amount;
+  sharedParticipants[participant].accounts[currency] += amount;
+  addSharedAudit(`${participant} burned ${amount.toFixed(2)} ${currency} tokens to deposit.`);
+  addSharedTransaction(participant, 'Burn', `Burned ${amount.toFixed(2)} ${currency}`);
+  updateAllDisplays();
+}
+function crossCurrencyTransfer() {
+  const participant = document.getElementById('ammParticipant').value;
+  const fromCurrency = document.getElementById('ammFromCurrency').value;
+  const toCurrency = document.getElementById('ammToCurrency').value;
+  const amount = parseFloat(document.getElementById('ammAmount').value);
+  if(isNaN(amount) || amount <= 0) return alert("Invalid amount.");
+  ammConvert(participant, fromCurrency, toCurrency, amount);
+}
+function postInterest() {
+  const freq = document.getElementById('interestFrequency').value;
+  const now = new Date();
+  cities.forEach(city => {
+    currencies.forEach(c => {
+      const borrowed = sharedParticipants[city].borrowed[c];
+      if(borrowed.amount <= 0) return;
+      const lastPost = borrowed.lastInterestPostDate || now;
+      const diffMs = now - lastPost;
+      const diffDays = Math.floor(diffMs / (1000 * 60 * 60 * 24));
+      let periods = 0;
+      if(freq === 'day') periods = diffDays;
+      else if(freq === 'week') periods = Math.floor(diffDays / 7);
+      else if(freq === 'month') periods = Math.floor(diffDays / 30);
+      if(periods <= 0) return;
+      const debitRate = INTEREST_RATES[c].debit;
+      const interest = borrowed.amount * debitRate * periods;
+      if(sharedParticipants[city].accounts[c] < interest) {
+        addSharedAudit(`${city} insufficient deposits to pay interest on borrowed ${c}. Interest accrued but unpaid.`);
+        return;
+      }
+      sharedParticipants[city].accounts[c] -= interest;
+      borrowed.amount += interest;
+      borrowed.lastInterestPostDate = now;
+      addSharedAudit(`Posted ${interest.toFixed(2)} ${c} interest for ${city} on borrowed amount over ${periods} ${freq}(s).`);
+      addSharedTransaction(city, 'Interest Posting', `Charged interest ${interest.toFixed(2)} ${c}`);
+    });
+  });
+  updateAllDisplays();
+}
+function repayBorrowedUI() {
+  const participant = document.getElementById('repayParticipant').value;
+  const currency = document.getElementById('repayCurrency').value;
+  const amount = parseFloat(document.getElementById('repayAmount').value);
+  if(isNaN(amount) || amount <= 0) return alert("Invalid repay amount.");
+  repayBorrowed(participant, currency, amount);
+}
+// Dashboard Update Functions
+function updateDashboard() {
+  // Accounts
+  const accountsDiv = document.getElementById('accountsSection');
+  accountsDiv.innerHTML = '<h3>Accounts (Deposits)</h3>';
+  cities.forEach(city => {
+    const div = document.createElement('div');
+    div.style.marginBottom = '10px';
+    div.innerHTML = `<strong>${city} (${sovereigns[city]})</strong> <span class="expandable" onclick="toggleDetails('${city}-accounts')">[+]</span>`;
+    const details = document.createElement('div');
+    details.id = `${city}-accounts`;
+    details.className = 'hidden';
+    details.style.marginLeft = '12px';
+    currencies.forEach(c => {
+      const val = sharedParticipants[city].accounts[c];
+      const a = document.createElement('a');
+      a.href = "#";
+      a.textContent = `${c}: ${val.toFixed(2)}`;
+      a.onclick = (e) => { e.preventDefault(); openModal(city, 'account', c); };
+      details.appendChild(a);
+      details.appendChild(document.createElement('br'));
+    });
+    div.appendChild(details);
+    accountsDiv.appendChild(div);
+  });
+  // Wallets
+  const walletsDiv = document.getElementById('walletsSection');
+  walletsDiv.innerHTML = '<h3>Wallets (Tokens)</h3>';
+  cities.forEach(city => {
+    const div = document.createElement('div');
+    div.style.marginBottom = '10px';
+    div.innerHTML = `<strong>${city} (${sovereigns[city]})</strong> <span class="expandable" onclick="toggleDetails('${city}-wallets')">[+]</span>`;
+    const details = document.createElement('div');
+    details.id = `${city}-wallets`;
+    details.className = 'hidden';
+    details.style.marginLeft = '12px';
+    currencies.forEach(c => {
+      const val = sharedParticipants[city].wallets[c];
+      const a = document.createElement('a');
+      a.href = "#";
+      a.textContent = `${c}: ${val.toFixed(2)}`;
+      a.onclick = (e) => { e.preventDefault(); openModal(city, 'wallet', c) };
+      details.appendChild(a);
+      details.appendChild(document.createElement('br'));
+    });
+    div.appendChild(details);
+    walletsDiv.appendChild(div);
+  });
+  // Loans
+  const loansDiv = document.getElementById('loansSection');
+  loansDiv.innerHTML = '<h3>Loan Accounts</h3>';
+  cities.forEach(city => {
+    const div = document.createElement('div');
+    div.style.marginBottom = '10px';
+    div.innerHTML = `<strong>${city} (${sovereigns[city]})</strong> <span class="expandable" onclick="toggleDetails('${city}-loans')">[+]</span>`;
+    const details = document.createElement('div');
+    details.id = `${city}-loans`;
+    details.className = 'hidden';
+    details.style.marginLeft = '12px';
+    currencies.forEach(c => {
+      const val = sharedParticipants[city].loans[c];
+      const a = document.createElement('a');
+      a.href = "#";
+      a.textContent = `${c}: ${val.toFixed(2)}`;
+      a.onclick = (e) => { e.preventDefault(); openModal(city, 'loan', c); };
+      details.appendChild(a);
+      details.appendChild(document.createElement('br'));
+    });
+    div.appendChild(details);
+    loansDiv.appendChild(div);
+  });
+}
+function toggleDetails(id) {
+  const elem = document.getElementById(id);
+  if (!elem) return;
+  const expandable = elem.previousElementSibling.querySelector('.expandable');
+  if(elem.classList.contains('hidden')) {
+    elem.classList.remove('hidden');
+    if(expandable) expandable.textContent = '[-]';
+  } else {
+    elem.classList.add('hidden');
+    if(expandable) expandable.textContent = '[+]';
+  }
+}
+// Liquidity Chart and AMM Rendering
+let liquidityChart = null;
+function renderLiquidityChart() {
+  const currency = document.getElementById('liquidityCurrency').value;
+  const ctx = document.getElementById('liquidityChart').getContext('2d');
+  const labels = [...cities];
+  const data = labels.map(city => sharedParticipants[city].wallets[currency] / 1000000);
+  if (liquidityChart) liquidityChart.destroy();
+  liquidityChart = new Chart(ctx, {
+    type: 'bar',
+    data: {
+      labels,
+      datasets: [{
+        label: `Liquidity Pool Balances (${currency} units of 1 Million)`,
+        data,
+        backgroundColor: 'rgba(25, 118, 210, 0.6)'
+      }]
+    },
+    options: {
+      scales: {
+        y: { beginAtZero: true, ticks: { stepSize: 1 } }
+      },
+      plugins: {
+        legend: { display: true, position: 'top' }
+      },
+      responsive: false,
+      maintainAspectRatio: false
+    }
+  });
+}
+function renderLiquidityAMMSection() {
+  renderLiquidityChart();
+  renderAMMRatesSection();
+}
+function renderAMMRatesSection() {
+  const currency = document.getElementById('ammCurrency').value;
+  const rates = getAMMRates(currency);
+  const div = document.getElementById('ammRatesList');
+  let html = `<strong>Swap rates for 1 ${currency}:</strong><br/>`;
+  Object.entries(rates).forEach(([toCur, rate]) => {
+    html += `${toCur}: ${rate.toFixed(6)}<br/>`;
+  });
+  div.innerHTML = html;
+}
+// ========== DLT NETWORK FUNCTIONS ==========
+// Transaction class for network
+class Transaction {
+  constructor({id, type, from, to, currency, amount, meta}){
+    this.id = id || 'tx-' + Math.random().toString(36).slice(2,9);
+    this.type = type;
+    this.from = from || null;
+    this.to = to || null;
+    this.currency = currency || null;
+    this.amount = amount || 0;
+    this.meta = meta || {};
+    this.timestamp = new Date();
+  }
+}
+// Network Services
+class LiquidityPoolService{
+  constructor(){
+    this.pool = {};
+    currencies.forEach(c=>this.pool[c]=0);
+  }
+  addLiquidity(currency, amount){ this.pool[currency] = (this.pool[currency]||0) + amount; }
+  removeLiquidity(currency, amount){ this.pool[currency] = (this.pool[currency]||0) - amount; }
+  borrow(currency, amount){
+    if(this.pool[currency] < amount) throw new Error('insufficient pool');
+    this.pool[currency] -= amount;
+    return amount;
+  }
+  repay(currency, amount){ this.pool[currency] = (this.pool[currency]||0) + amount; }
+  snapshot(){ return {...this.pool}; }
+}
+class AMMService{
+  constructor(liquidity){ this.liquidity = liquidity; }
+  getAmountOut(fromCurrency, toCurrency, amountIn){
+    const poolFrom = this.liquidity.pool[fromCurrency];
+    const poolTo = this.liquidity.pool[toCurrency];
+    if(!poolFrom || !poolTo) return 0;
+    const amountInWithFee = amountIn * 0.997;
+    const k = poolFrom * poolTo;
+    const newPoolFrom = poolFrom + amountInWithFee;
+    const newPoolTo = k / newPoolFrom;
+    const amountOut = poolTo - newPoolTo;
+    return amountOut;
+  }
+  swap(fromCurrency, toCurrency, amountIn){
+    const amountOut = this.getAmountOut(fromCurrency,toCurrency,amountIn);
+    if(amountOut <= 0) throw new Error('zero output');
+    this.liquidity.pool[fromCurrency] += amountIn;
+    this.liquidity.pool[toCurrency] -= amountOut;
+    return amountOut;
+  }
+}
+class Network{
+  constructor(){
+    this.nodes = {};
+    cities.forEach(c=>this.nodes[c] = sharedParticipants[c]);
+    this.liquidityService = new LiquidityPoolService();
+    this.ammService = new AMMService(this.liquidityService);
+    this.audit = [];
+    this.currentLeader = cities[0];
+
+    // Sync liquidity service with shared pool
+    this.syncLiquidityService();
+  }
+  syncLiquidityService() {
+    currencies.forEach(c => {
+      this.liquidityService.pool[c] = sharedLiquidityPool[c];
+    });
+  }
+  broadcastTx(tx){
+    Object.values(this.nodes).forEach(n=>n.mempool.unshift(tx));
+    this.audit.unshift({timestamp:new Date(), message:`Broadcast ${tx.type} ${tx.id}`});
+    addSharedAudit(`Network broadcast ${tx.type} ${tx.id}`);
+  }
+  runConsensus(){
+    this.syncLiquidityService();
+    const leader = this.nodes[this.currentLeader];
+    const aggregatedTxs = [];
+    Object.values(this.nodes).forEach(node=>{
+      while(node.mempool.length){
+        const tx = node.mempool.pop();
+        aggregatedTxs.push(tx);
+      }
+    });
+    aggregatedTxs.forEach(tx=>{
+      Object.values(this.nodes).forEach(node=>{
+        this.applyTxToNode(node, tx);
+        node.chain.unshift(tx);
+      });
+    });
+    this.audit.unshift({timestamp:new Date(), message:`Consensus round by ${this.currentLeader} applied ${aggregatedTxs.length} txs`});
+
+    // Rotate leader
+    const idx = cities.indexOf(this.currentLeader);
+    this.currentLeader = cities[(idx+1)%cities.length];
+
+    // Sync back to shared state
+    recalcSharedLiquidityPool();
+    addSharedAudit(`Consensus round completed, ${aggregatedTxs.length} transactions processed`);
+  }
+  applyTxToNode(node, tx) {
+    if(node.chain.some(t=>t.id===tx.id)) return;
+    switch(tx.type){
+      case 'tokenize':
+        node.accounts[tx.currency] -= tx.amount;
+        node.wallets[tx.currency] += tx.amount;
+        break;
+      case 'transfer':
+        if(tx.from === node.name) node.wallets[tx.currency] -= tx.amount;
+        if(tx.to === node.name) node.wallets[tx.currency] += tx.amount;
+        break;
+      case 'borrow':
+        if(tx.to === node.name){
+          node.wallets[tx.currency] += tx.amount;
+          node.loans[tx.currency] += tx.amount;
+          node.borrowed[tx.currency].amount += tx.amount;
+        }
+        break;
+      case 'repay':
+        if(tx.from === node.name){
+          node.wallets[tx.currency] -= tx.amount;
+          node.loans[tx.currency] -= tx.amount;
+          node.borrowed[tx.currency].amount = Math.max(0, node.borrowed[tx.currency].amount - tx.amount);
+        }
+        break;
+      case 'swap':
+        if(tx.from === node.name){
+          node.wallets[tx.meta.fromCurrency] -= tx.meta.amountIn;
+        }
+        if(tx.to === node.name){
+          node.wallets[tx.meta.toCurrency] += tx.meta.amountOut;
+        }
+        break;
+    }
+  }
+  syncNodes(){
+    Object.values(this.nodes).forEach(node=>{
+      while(node.mempool.length) {
+        const tx = node.mempool.pop();
+        this.applyTxToNode(node, tx);
+        node.chain.unshift(tx);
+      }
+      node.lastSync = new Date();
+    });
+    this.audit.unshift({timestamp:new Date(), message:'Network sync complete'});
+    recalcSharedLiquidityPool();
+    addSharedAudit('Network nodes synchronized');
+  }
+}
+let network;
+function initializeNetwork() {
+  network = new Network();
+}
+// Network UI Functions
+function uiTokenize(){
+  const node = document.getElementById('ui_sender').value;
+  const currency = document.getElementById('ui_currency').value;
+  const amount = parseFloat(document.getElementById('ui_amount').value);
+  if(!amount || amount<=0) return alert('invalid amount');
+
+  network.liquidityService.addLiquidity(currency, amount);
+  const tx = new Transaction({type:'tokenize', from:node, to:node, currency, amount});
+  network.broadcastTx(tx);
+  updateAllDisplays();
+}
+function uiTransfer(){
+  const from=document.getElementById('ui_sender').value;
+  const to=document.getElementById('ui_receiver').value;
+  const cur=document.getElementById('ui_currency').value;
+  const amt=parseFloat(document.getElementById('ui_amount').value);
+  if(!amt||amt<=0) return alert('invalid');
+
+  const tx = new Transaction({type:'transfer', from, to, currency:cur, amount:amt});
+  network.broadcastTx(tx);
+  updateAllDisplays();
+}
+function uiSwap(){
+  const node=document.getElementById('ui_sender').value;
+  const fromCur=document.getElementById('ui_currency').value;
+  const toCur = currencies.find(c=>c!==fromCur);
+  const amt = parseFloat(document.getElementById('ui_amount').value);
+  if(!amt||amt<=0) return alert('invalid');
+
+  const amountOut = network.ammService.getAmountOut(fromCur, toCur, amt);
+  if(amountOut <= 0) { alert('Swap would return zero'); return; }
+  network.ammService.swap(fromCur, toCur, amt);
+  const tx = new Transaction({type:'swap', from:node, to:node, currency:null, amount:0, meta:{fromCurrency:fromCur,toCurrency:toCur,amountIn:amt,amountOut}});
+  network.broadcastTx(tx);
+  updateAllDisplays();
+}
+function runConsensusRound() {
+  network.runConsensus();
+  updateAllDisplays();
+}
+function syncAllNodes() {
+  network.syncNodes();
+  updateAllDisplays();
+}
+// Network Rendering Functions
+function renderNodesList(){
+  const nodesList = document.getElementById('nodesList');
+  if (!nodesList) return;
+  nodesList.innerHTML='';
+  Object.values(network.nodes).forEach(n=>{
+    const div=document.createElement('div');
+    div.className='nodeItem';
+    div.innerHTML = `<div><span class='nodeBadge'>${n.name || cities.find(c => sharedParticipants[c] === n)}</span> <span class='muted'>(${sovereigns[n.name || cities.find(c => sharedParticipants[c] === n)]})</span></div><div class='muted'>Wallet ${n.wallets[sovereigns[n.name || cities.find(c => sharedParticipants[c] === n)]].toFixed(0)}</div>`;
+    nodesList.appendChild(div);
+  });
+}
+function renderNodesGrid(){
+  const grid = document.getElementById('nodesGrid');
+  if (!grid) return;
+  grid.innerHTML='';
+  cities.forEach(city => {
+    const n = sharedParticipants[city];
+    const card=document.createElement('div');
+    card.className='nodeCard';
+    let inner = `<strong>${city}</strong><div class='mini'>Sovereign ${sovereigns[city]}</div><div style='margin-top:6px'><em class='mini'>Wallets</em>`;
+    currencies.forEach(c=>{ inner += `<div style='font-size:0.85rem'>${c}: ${n.wallets[c].toFixed(2)}</div>`; });
+    inner += `</div><div style='margin-top:8px'><button onclick="inspectNode('${city}')">Inspect</button></div>`;
+    card.innerHTML = inner;
+    grid.appendChild(card);
+  });
+}
+function renderLiquidityTable(){
+  const tbody = document.getElementById('liqTable');
+  if (!tbody) return;
+  tbody.innerHTML='';
+  currencies.forEach(c=>{
+    const tr=document.createElement('tr');
+    tr.innerHTML = `<td>${c}</td><td>${(network.liquidityService.pool[c]||0).toFixed(2)}</td>`;
+    tbody.appendChild(tr);
+  });
+}
+function renderAMMRates(){
+  const out = document.getElementById('ammRates');
+  if (!out) return;
+  out.innerHTML='';
+  const base = currencies[0];
+  let html = '<table><thead><tr><th>Pair</th><th>1 unit -> out</th></tr></thead><tbody>';
+  currencies.forEach(to=>{
+    if(to===base) return;
+    const amt=network.ammService.getAmountOut(base,to,1);
+    html += `<tr><td>${base}/${to}</td><td>${amt.toFixed(6)}</td></tr>`;
+  });
+  html += '</tbody></table>';
+  out.innerHTML = html;
+}
+function renderTransactions(){
+  const div = document.getElementById('transactionsList');
+  if (!div) return;
+  div.innerHTML='';
+  const combined = [];
+  combined.push(...network.audit.slice(0,80).map(a=>({time:a.timestamp,msg:a.message})));
+  Object.values(network.nodes).forEach((n, idx)=> {
+    const cityName = cities[idx];
+    combined.push(...n.chain.slice(0,40).map(t=>({time:t.timestamp,msg:`[${cityName}] ${t.type} ${t.currency||''} ${t.amount||''} ${t.meta?JSON.stringify(t.meta):''}`})));
+  });
+  combined.sort((a,b)=>b.time - a.time);
+  combined.slice(0,80).forEach(e=>{
+    const row = document.createElement('div');
+    row.style.padding='6px 0';
+    row.style.borderBottom='1px dashed #eef6ff';
+    row.innerHTML = `<div style='font-weight:700'>${new Date(e.time).toLocaleString()}</div><div class='muted'>${e.msg}</div>`;
+    div.appendChild(row);
+  });
+}
+function renderNetworkCanvas(){
+  const c = document.getElementById('networkCanvas');
+  if (!c) return;
+  const ctx = c.getContext('2d');
+  const W=c.width=320; const H=c.height=360;
+  ctx.clearRect(0,0,W,H);
+  const cx=W/2, cy=H/2, r=120; const n=cities.length;
+  ctx.font='12px Arial'; ctx.textAlign='center'; ctx.textBaseline='middle';
+  const nodesPos = {};
+  cities.forEach((city,i)=>{
+    const angle = (i/n) * Math.PI*2 - Math.PI/2;
+    const x = cx + Math.cos(angle)*r; const y = cy + Math.sin(angle)*r;
+    nodesPos[city]={x,y};
+  });
+  ctx.strokeStyle='rgba(20,90,150,0.06)'; ctx.lineWidth=1; ctx.beginPath();
+  cities.forEach(a=>{
+    cities.forEach(b=>{
+      if(a===b) return;
+      ctx.moveTo(nodesPos[a].x,nodesPos[a].y);
+      ctx.lineTo(nodesPos[b].x,nodesPos[b].y);
+    });
+  });
+  ctx.stroke();
+  cities.forEach(city=>{
+    const p = nodesPos[city];
+    ctx.beginPath();
+    ctx.fillStyle='#fff';
+    ctx.strokeStyle='#0b66b2';
+    ctx.lineWidth=2;
+    ctx.arc(p.x,p.y,18,0,Math.PI*2);
+    ctx.fill();
+    ctx.stroke();
+    ctx.fillStyle='#0b66b2';
+    ctx.fillText(city,p.x,p.y);
+  });
+}
+function inspectNode(name){
+  const node = sharedParticipants[name];
+  let detail = `Node: ${name}\nSovereign: ${sovereigns[name]}\n\nWallets:\n`;
+  currencies.forEach(c=> detail += `${c}: ${node.wallets[c].toFixed(2)}\n`);
+  detail += '\nRecent chain entries:\n';
+  node.chain.slice(0,10).forEach(t=> detail += `${t.timestamp.toLocaleString()} ${t.type} ${t.currency||''} ${t.amount||''}\n`);
+  alert(detail);
+}
+function renderAllNetwork() {
+  if (network) {
+    renderNodesList();
+    renderNodesGrid();
+    renderLiquidityTable();
+    renderAMMRates();
+    renderTransactions();
+    renderNetworkCanvas();
+  }
+}
+// ========== SHARED FUNCTIONS ==========
+function updateAllDisplays() {
+  recalcSharedLiquidityPool();
+  if (network) {
+    network.syncLiquidityService();
+  }
+  if (currentActiveTab === 'crossborder') {
+    updateDashboard();
+    renderLiquidityAMMSection();
+  } else if (currentActiveTab === 'network') {
+    renderAllNetwork();
+  }
+}
+function populateDropdowns() {
+  const participantSelects = ['tokenizeParticipant', 'sender', 'receiver', 'burnParticipant', 'ammParticipant', 'repayParticipant'];
+  participantSelects.forEach(id => {
+    const sel = document.getElementById(id);
+    if (sel) {
+      sel.innerHTML = '';
+      cities.forEach(c => {
+        const opt = document.createElement('option');
+        opt.value = c;
+        opt.textContent = c;
+        sel.appendChild(opt);
+      });
+    }
+  });
+  const currencySelects = ['tokenizeCurrency', 'transferCurrency', 'burnCurrency', 'ammFromCurrency', 'ammToCurrency', 'repayCurrency', 'liquidityCurrency', 'ammCurrency'];
+  currencySelects.forEach(id => {
+    const sel = document.getElementById(id);
+    if (sel) {
+      sel.innerHTML = '';
+      currencies.forEach(c => {
+        const opt = document.createElement('option');
+        opt.value = c;
+        opt.textContent = c;
+        sel.appendChild(opt);
+      });
+    }
+  });
+  // Network UI dropdowns
+  const networkSelects = ['ui_sender', 'ui_receiver'];
+  networkSelects.forEach(id => {
+    const sel = document.getElementById(id);
+    if (sel) {
+      sel.innerHTML = '';
+      cities.forEach(c => {
+        const opt = document.createElement('option');
+        opt.value = c;
+        opt.textContent = c;
+        sel.appendChild(opt);
+      });
+    }
+  });
+  const networkCurrencySelect = document.getElementById('ui_currency');
+  if (networkCurrencySelect) {
+    networkCurrencySelect.innerHTML = '';
+    currencies.forEach(c => {
+      const opt = document.createElement('option');
+      opt.value = c;
+      opt.textContent = c;
+      networkCurrencySelect.appendChild(opt);
+    });
+  }
+  // Default values
+  const liquidityCurrencySelect = document.getElementById('liquidityCurrency');
+  if (liquidityCurrencySelect) liquidityCurrencySelect.value = 'USD';
+
+  const ammCurrencySelect = document.getElementById('ammCurrency');
+  if (ammCurrencySelect) ammCurrencySelect.value = 'USD';
+}
+// ========== MODAL FUNCTIONS ==========
+// Modal for transaction history (accounts/wallets/loans)
+const modalOverlay = document.getElementById('modalOverlay');
+const modalTitle = document.getElementById('modalTitle');
+const modalTable = document.getElementById('modalTable');
+const modalSearch = document.getElementById('modalSearch');
+function openModal(city, type, currency) {
+  modalOverlay.style.display = 'flex';
+  modalSearch.value = '';
+  modalTitle.textContent = `${city} - ${type} transactions (${currency})`;
+  const tbody = modalTable.querySelector('tbody');
+  tbody.innerHTML = '';
+  let txs;
+  if(type === 'account') {
+    txs = sharedParticipants[city].transactions.filter(tx =>
+      tx.details.includes(currency) &&
+      (tx.details.toLowerCase().includes('deposit') ||
+       tx.details.toLowerCase().includes('tokenize') ||
+       tx.details.toLowerCase().includes('burn') ||
+       tx.details.toLowerCase().includes('interest'))
+    );
+  } else if(type === 'wallet') {
+    txs = sharedParticipants[city].transactions.filter(tx =>
+      tx.details.includes(currency) &&
+      (tx.details.toLowerCase().includes('transfer') ||
+       tx.details.toLowerCase().includes('swap') ||
+       tx.details.toLowerCase().includes('borrow') ||
+       tx.details.toLowerCase().includes('repay'))
+    );
+  } else if(type === 'loan') {
+    txs = sharedParticipants[city].transactions.filter(tx =>
+      tx.details.includes(currency) &&
+      (tx.type === 'Borrow' || tx.type === 'Repay' || tx.type === 'Interest Posting')
+    );
+  } else {
+    txs = [];
+  }
+  if(txs.length === 0) {
+    tbody.innerHTML = `<tr><td colspan="3" style="text-align:center;">No transactions found.</td></tr>`;
+    return;
+  }
+  txs.forEach(tx => {
+    const tr = document.createElement('tr');
+    tr.innerHTML = `<td>${tx.timestamp.toLocaleString()}</td><td>${tx.type}</td><td>${tx.details}</td>`;
+    tbody.appendChild(tr);
+  });
+}
+function closeModal() {
+  modalOverlay.style.display = 'none';
+}
+function filterModalTable() {
+  const filter = modalSearch.value.toLowerCase();
+  const rows = modalTable.querySelectorAll('tbody tr');
+  rows.forEach(row => {
+    const txt = row.textContent.toLowerCase();
+    row.style.display = txt.includes(filter) ? '' : 'none';
+  });
+}
+// Audit Modal
+const auditModalOverlay = document.getElementById('auditModalOverlay');
+const auditTable = document.getElementById('auditTable');
+const auditSearch = document.getElementById('auditSearch');
+function openAuditModal() {
+  auditModalOverlay.style.display = 'flex';
+  auditSearch.value = '';
+  renderAuditTable();
+}
+function closeAuditModal() {
+  auditModalOverlay.style.display = 'none';
+}
+function renderAuditTable() {
+  const tbody = auditTable.querySelector('tbody');
+  tbody.innerHTML = '';
+  sharedAuditTrail.forEach(entry => {
+    const tr = document.createElement('tr');
+    tr.innerHTML = `<td>${entry.timestamp.toLocaleString()}</td><td>${entry.message}</td>`;
+    tbody.appendChild(tr);
+  });
+}
+function filterAuditTable() {
+  const filter = auditSearch.value.toLowerCase();
+  const rows = auditTable.querySelectorAll('tbody tr');
+  rows.forEach(row => {
+    const txt = row.textContent.toLowerCase();
+    row.style.display = txt.includes(filter) ? '' : 'none';
+  });
+}
+// ========== INITIALIZATION ==========
+function initializeSystem() {
+  initializeSharedSystem();
+  initializeNetwork();
+  populateDropdowns();
+  updateDashboard();
+  renderLiquidityAMMSection();
+  renderAllNetwork();
+}
+// Initialize on page load
+window.addEventListener('DOMContentLoaded', initializeSystem);
+// Close modals on outside click or Esc
+window.onclick = function(event) {
+  if(event.target === modalOverlay) closeModal();
+  if(event.target === auditModalOverlay) closeAuditModal();
+};
+window.onkeydown = function(event) {
+  if(event.key === "Escape") {
+    closeModal();
+    closeAuditModal();
+  }
+};
+// Expose shared system to console for debugging
+window.sharedParticipants = sharedParticipants;
+window.network = network;
+</script>
+</body>
+</html>
