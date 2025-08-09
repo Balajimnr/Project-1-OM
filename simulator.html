@@ -1060,31 +1060,43 @@ class Network{
   runConsensus(){
     this.syncLiquidityService();
     const leader = this.nodes[this.currentLeader];
-    let success = true;
-    let message = 'Consensus successful';
+    const processedTxs = [];
 
-    const tx = leader.mempool.pop();
-    if (!tx) return { success: true, message: "No transactions in mempool."};
-
-    // Simple validation before applying
-    const validationResult = this.validateTransaction(tx);
-    if (!validationResult.valid) {
-        success = false;
-        message = validationResult.message;
-        addSharedAudit(`TX ${tx.id} FAILED: ${message}`);
-    } else {
-        Object.values(this.nodes).forEach(node => {
-            this.applyTxToNode(node, tx);
-        });
-        addSharedAudit(`TX ${tx.id} SUCCESS`);
+    // Process all transactions from the leader's mempool
+    while(leader.mempool.length > 0) {
+        const tx = leader.mempool.pop(); // Process in LIFO order
+        processedTxs.push(tx);
     }
 
-    this.audit.unshift({timestamp:new Date(), message:`Consensus round by ${this.currentLeader} processed ${tx.id} with status: ${success ? 'Success' : 'Failed'}`});
+    if (processedTxs.length === 0) {
+        return { success: true, message: "No transactions in mempool." };
+    }
+
+    let successfulTxs = 0;
+    // Apply all valid transactions to all nodes
+    processedTxs.forEach(tx => {
+        const validationResult = this.validateTransaction(tx);
+        if (validationResult.valid) {
+            Object.values(this.nodes).forEach(node => {
+                this.applyTxToNode(node, tx);
+            });
+            addSharedAudit(`TX ${tx.id} SUCCESS`);
+            successfulTxs++;
+        } else {
+            addSharedAudit(`TX ${tx.id} FAILED: ${validationResult.message}`);
+        }
+    });
+
+    const message = `Consensus round by ${this.currentLeader} processed ${successfulTxs}/${processedTxs.length} transactions.`;
+    this.audit.unshift({timestamp:new Date(), message: message});
+    addSharedAudit(message);
+
+    // Rotate leader
     const idx = cities.indexOf(this.currentLeader);
     this.currentLeader = cities[(idx+1)%cities.length];
     recalcSharedLiquidityPool();
 
-    return { success, message };
+    return { success: true, message: message };
   }
   validateTransaction(tx) {
       const participant = this.nodes[tx.from];
