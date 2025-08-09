@@ -183,13 +183,6 @@
     height: 300px;
   }
 
-  #ammRatesList {
-    font-size: 0.9rem;
-    color: #0d47a1;
-    line-height: 1.5;
-    margin-top: 8px;
-  }
-
   label {
     font-weight: 600;
     margin-right: 6px;
@@ -302,11 +295,6 @@
   .muted {
     color: #667d9a;
     font-size: 0.9rem;
-  }
-
-  #transactionsList {
-    max-height: 260px;
-    overflow: auto;
   }
 
   /* Modal Styles */
@@ -478,21 +466,7 @@
       </section>
       <section id="ammSection" tabindex="0" aria-label="Automated Market Maker rates">
         <h3>AMM Rates</h3>
-        <label for="ammCurrency">Currency:</label>
-        <select id="ammCurrency" onchange="renderAMMRatesSection()" aria-label="Select currency for AMM rates display"></select>
-        <div id="ammRatesList" aria-live="polite" style="margin-top: 10px; font-size: 0.9rem; color: #0d47a1;"></div>
-      </section>
-    </div>
-
-    <!-- Detailed Tables -->
-    <div id="detailedTablesWrapper" style="display:flex;gap:40px;margin-bottom:30px;flex-wrap:wrap">
-      <section id="liquidityTableSection" style="flex:1;min-width:300px" class="dashboard-section">
-        <h3>Liquidity Pool Details</h3>
-        <table style="margin-top:8px;width:100%"><thead><tr><th>Currency</th><th>Total Pool</th></tr></thead><tbody id="liqTable"></tbody></table>
-      </section>
-      <section id="ammTableSection" style="flex:1;min-width:300px" class="dashboard-section">
-        <h3>AMM Rate Details</h3>
-        <div id="ammRates" style="margin-top:8px"></div>
+        <div id="ammMatrix"></div>
       </section>
     </div>
 
@@ -564,7 +538,7 @@
     <h4 id="auditModalTitle">Consolidated Audit Trail</h4>
     <input type="text" id="auditSearch" placeholder="Search audit..." oninput="filterAuditTable()" aria-label="Search audit trail" />
     <table id="auditTable" role="table" aria-describedby="auditModalTitle">
-      <thead><tr><th>Date</th><th>Source</th><th>Event</th></tr></thead>
+      <thead><tr><th>Date</th><th>Source</th><th>Event Type</th><th>Details</th></tr></thead>
       <tbody></tbody>
     </table>
   </div>
@@ -686,7 +660,7 @@ function processTransaction(tx, onSuccessCallback) {
     showStatusModal('Processing transaction...');
 
     setTimeout(() => {
-        let result = network.broadcastAndConsolidate(tx);
+        const result = network.broadcastAndConsolidate(tx);
 
         if (result.success) {
             updateAllDisplays();
@@ -704,35 +678,12 @@ function processTransaction(tx, onSuccessCallback) {
     }, 500); // Simulate network latency
 }
 // ========== CROSS BORDER TRANSFER FUNCTIONS ==========
-// AMM logic - Simple constant product AMM: x * y = k
-function getAMMRates(fromCurrency) {
-  const poolBalances = {...sharedLiquidityPool};
-  const results = {};
-  currencies.forEach(toCurrency => {
-    if(toCurrency === fromCurrency) return;
-    const x = poolBalances[fromCurrency];
-    const y = poolBalances[toCurrency];
-    if(x <= 0 || y <= 0) {
-      results[toCurrency] = 0;
-      return;
-    }
-    const inputAmount = 1;
-    const inputAmountWithFee = inputAmount * 0.997;
-    const k = x * y;
-    const newX = x + inputAmountWithFee;
-    const newY = k / newX;
-    const outputAmount = y - newY;
-    results[toCurrency] = outputAmount;
-  });
-  return results;
-}
 // UI Functions for Cross Border Transfer
 function tokenizeFromUI() {
   const participant = document.getElementById('tokenizeParticipant').value;
   const currency = document.getElementById('tokenizeCurrency').value;
   const amount = parseFloat(document.getElementById('tokenizeAmount').value);
   if(isNaN(amount) || amount <= 0) { alert("Invalid amount."); return; }
-  if(sharedParticipants[participant].accounts[currency] < amount) { alert(`Insufficient deposits in account to tokenize.`); return; }
 
   const tx = new Transaction({ type: 'tokenize', from: participant, to: participant, currency: currency, amount: amount });
   processTransaction(tx);
@@ -745,48 +696,14 @@ function transferFromUI() {
 
     if (isNaN(amount) || amount <= 0) { alert("Invalid amount."); return; }
 
-    const senderBalance = sharedParticipants[sender].wallets[currency];
-    if (senderBalance >= amount) {
-        const tx = new Transaction({ type: 'transfer', from: sender, to: receiver, currency: currency, amount: amount });
-        processTransaction(tx);
-        return;
-    }
-
-    const totalWalletBalance = Object.values(sharedParticipants[sender].wallets).reduce((acc, v) => acc + v, 0);
-    if (totalWalletBalance >= amount) {
-        if (confirm(`Insufficient ${currency} balance. You have funds in other currencies. Would you like to perform a swap first?`)) {
-            const fromSwapCurrency = prompt("Enter currency to swap from (e.g., USD, JPY):");
-            if (!currencies.includes(fromSwapCurrency) || sharedParticipants[sender].wallets[fromSwapCurrency] < amount) {
-                alert("Invalid or insufficient currency for swap.");
-                return;
-            }
-            const swapTx = new Transaction({ type: 'swap', from: sender, to: sender, meta: { fromCurrency: fromSwapCurrency, toCurrency: currency, amountIn: amount } });
-            processTransaction(swapTx, () => {
-                // After successful swap, perform the transfer
-                const transferTx = new Transaction({ type: 'transfer', from: sender, to: receiver, currency: currency, amount: amount });
-                processTransaction(transferTx);
-            });
-            return;
-        }
-    }
-
-    // If swap is not possible or declined, attempt to borrow
-    const needed = amount - senderBalance;
-    if (sharedLiquidityPool[currency] >= needed) {
-        if(confirm(`Insufficient funds. Do you want to borrow ${needed.toFixed(2)} ${currency} to complete the transfer?`)) {
-            const tx = new Transaction({ type: 'borrow_and_transfer', from: sender, to: receiver, currency: currency, amount: amount, meta: { borrowAmount: needed } });
-            processTransaction(tx);
-        }
-    } else {
-        alert(`Transfer failed: Insufficient funds and not enough liquidity in the pool to borrow.`);
-    }
+    const tx = new Transaction({ type: 'transfer', from: sender, to: receiver, currency: currency, amount: amount });
+    processTransaction(tx);
 }
 function burnTokensUI() {
   const participant = document.getElementById('burnParticipant').value;
   const currency = document.getElementById('burnCurrency').value;
   const amount = parseFloat(document.getElementById('burnAmount').value);
   if(isNaN(amount) || amount <= 0) { alert("Invalid amount."); return; }
-  if(sharedParticipants[participant].wallets[currency] < amount) { alert("Insufficient tokens to burn."); return; }
 
   const tx = new Transaction({ type: 'burn', from: participant, to: participant, currency: currency, amount: amount });
   processTransaction(tx);
@@ -797,8 +714,6 @@ function crossCurrencyTransfer() {
   const toCurrency = document.getElementById('ammToCurrency').value;
   const amount = parseFloat(document.getElementById('ammAmount').value);
   if(isNaN(amount) || amount <= 0) { alert("Invalid amount."); return; }
-  if(sharedParticipants[participant].wallets[fromCurrency] < amount) { alert(`Insufficient ${fromCurrency} tokens to swap.`); return; }
-  if(sharedLiquidityPool[fromCurrency] <= 0 || sharedLiquidityPool[toCurrency] <= 0) { alert("AMM liquidity pool is empty for one of the selected currencies. Swap cannot be performed."); return; }
 
   const tx = new Transaction({ type: 'swap', from: participant, to: participant, meta: { fromCurrency: fromCurrency, toCurrency: toCurrency, amountIn: amount } });
   processTransaction(tx);
@@ -808,14 +723,14 @@ function repayBorrowedUI() {
   const currency = document.getElementById('repayCurrency').value;
   const amount = parseFloat(document.getElementById('repayAmount').value);
   if(isNaN(amount) || amount <= 0) { alert("Invalid repay amount."); return; }
-  if(sharedParticipants[participant].wallets[currency] < amount) { alert(`Insufficient ${currency} tokens in wallet to repay.`); return; }
-  if(sharedParticipants[participant].borrowed[currency].amount <= 0) { alert("No borrowed amount to repay."); return; }
 
   const repayAmount = Math.min(amount, sharedParticipants[participant].borrowed[currency].amount);
   const tx = new Transaction({ type: 'repay', from: participant, to: participant, currency: currency, amount: repayAmount });
   processTransaction(tx);
 }
 function postInterest() {
+  // This action is complex to model as a single transaction.
+  // For now, it will remain a direct admin action.
   const freq = document.getElementById('interestFrequency').value;
   const now = new Date();
   cities.forEach(city => {
@@ -968,17 +883,41 @@ function renderLiquidityChart() {
 }
 function renderLiquidityAMMSection() {
   renderLiquidityChart();
-  renderAMMRatesSection();
+  renderAmmMatrix();
 }
-function renderAMMRatesSection() {
-  const currency = document.getElementById('ammCurrency').value;
-  const rates = getAMMRates(currency);
-  const div = document.getElementById('ammRatesList');
-  let html = `<strong>Swap rates for 1 ${currency}:</strong><br/>`;
-  Object.entries(rates).forEach(([toCur, rate]) => {
-    html += `${toCur}: ${rate.toFixed(6)}<br/>`;
-  });
-  div.innerHTML = html;
+function renderAmmMatrix() {
+    const container = document.getElementById('ammMatrix');
+    container.innerHTML = '';
+    const table = document.createElement('table');
+    table.style.width = '100%';
+    table.style.fontSize = '0.8rem';
+
+    // Header Row
+    const thead = document.createElement('thead');
+    let headerRow = '<tr><th>&nbsp;</th>';
+    currencies.forEach(c => headerRow += `<th>${c}</th>`);
+    headerRow += '</tr>';
+    thead.innerHTML = headerRow;
+    table.appendChild(thead);
+
+    // Body Rows
+    const tbody = document.createElement('tbody');
+    currencies.forEach(from_c => {
+        let rowHtml = `<tr><th>${from_c}</th>`;
+        const rates = network.ammService.getAmountOut(from_c, null, 1); // Get all rates for from_c
+        currencies.forEach(to_c => {
+            if (from_c === to_c) {
+                rowHtml += `<td>1.00</td>`;
+            } else {
+                const rate = rates[to_c] || 0;
+                rowHtml += `<td>${rate.toFixed(4)}</td>`;
+            }
+        });
+        rowHtml += '</tr>';
+        tbody.innerHTML += rowHtml;
+    });
+    table.appendChild(tbody);
+    container.appendChild(table);
 }
 // ========== DLT NETWORK FUNCTIONS ==========
 // Transaction class for network
@@ -1014,6 +953,25 @@ class AMMService{
   constructor(liquidity){ this.liquidity = liquidity; }
   getAmountOut(fromCurrency, toCurrency, amountIn){
     const poolFrom = this.liquidity.pool[fromCurrency];
+    // If toCurrency is null, get all rates
+    if (toCurrency === null) {
+        const results = {};
+        currencies.forEach(c => {
+            if (c === fromCurrency) return;
+            const poolTo = this.liquidity.pool[c];
+            if (!poolFrom || !poolTo) {
+                results[c] = 0;
+                return;
+            }
+            const amountInWithFee = amountIn * 0.997;
+            const k = poolFrom * poolTo;
+            const newPoolFrom = poolFrom + amountInWithFee;
+            const newPoolTo = k / newPoolFrom;
+            results[c] = poolTo - newPoolTo;
+        });
+        return results;
+    }
+    // Original logic for single pair
     const poolTo = this.liquidity.pool[toCurrency];
     if(!poolFrom || !poolTo) return 0;
     const amountInWithFee = amountIn * 0.997;
@@ -1080,14 +1038,14 @@ class Network{
             Object.values(this.nodes).forEach(node => {
                 this.applyTxToNode(node, tx);
             });
-            addSharedAudit(`TX ${tx.id} SUCCESS`);
+            addSharedAudit(`Transaction ${tx.id} (${tx.type}) was successfully processed.`);
             successfulTxs++;
         } else {
-            addSharedAudit(`TX ${tx.id} FAILED: ${validationResult.message}`);
+            addSharedAudit(`Transaction ${tx.id} (${tx.type}) failed: ${validationResult.message}`);
         }
     });
 
-    const message = `Consensus round by ${this.currentLeader} processed ${successfulTxs}/${processedTxs.length} transactions.`;
+    const message = `Consensus round by ${this.currentLeader} processed ${successfulTxs} of ${processedTxs.length} transactions.`;
     this.audit.unshift({timestamp:new Date(), message: message});
     addSharedAudit(message);
 
@@ -1099,18 +1057,56 @@ class Network{
     return { success: true, message: message };
   }
   validateTransaction(tx) {
-      const participant = this.nodes[tx.from];
-      switch (tx.type) {
-          case 'transfer_with_borrow':
-              const balance = participant.wallets[tx.currency];
-              if (balance >= tx.amount) return { valid: true }; // No borrow needed
-              const needed = tx.amount - balance;
-              if (sharedLiquidityPool[tx.currency] < needed) {
-                  return { valid: false, message: `Insufficient liquidity to borrow ${needed.toFixed(2)}.` };
-              }
-              break;
-      }
-      return { valid: true };
+    const participant = this.nodes[tx.from];
+    if (!participant) {
+        return { valid: false, message: `Invalid participant: ${tx.from}` };
+    }
+
+    switch (tx.type) {
+        case 'tokenize': {
+            if (participant.accounts[tx.currency] < tx.amount) {
+                return { valid: false, message: `Insufficient deposit to tokenize ${tx.amount} ${tx.currency}.` };
+            }
+            break;
+        }
+        case 'transfer': {
+            if (participant.wallets[tx.currency] < tx.amount) {
+                return { valid: false, message: `Insufficient funds for transfer.` };
+            }
+            break;
+        }
+        case 'borrow_and_transfer': {
+            const balance = participant.wallets[tx.currency];
+            if (balance < tx.amount) {
+                const needed = tx.amount - balance;
+                if (sharedLiquidityPool[tx.currency] < needed) {
+                    return { valid: false, message: `Insufficient liquidity to borrow ${needed.toFixed(2)}.` };
+                }
+            }
+            break;
+        }
+        case 'burn': {
+            if (participant.wallets[tx.currency] < tx.amount) {
+                return { valid: false, message: `Insufficient tokens to burn.` };
+            }
+            break;
+        }
+        case 'swap': {
+            const { fromCurrency, amountIn } = tx.meta;
+            if (participant.wallets[fromCurrency] < amountIn) {
+                return { valid: false, message: `Insufficient ${fromCurrency} to swap.` };
+            }
+            break;
+        }
+        case 'repay': {
+            if (participant.wallets[tx.currency] < tx.amount) {
+                return { valid: false, message: `Insufficient tokens to repay.` };
+            }
+            break;
+        }
+    }
+    // If no validation fails, the transaction is valid.
+    return { valid: true };
   }
   applyTxToNode(node, tx) {
     if(node.chain.some(t=>t.id===tx.id)) return;
@@ -1218,20 +1214,6 @@ function renderLiquidityTable(){
     tbody.appendChild(tr);
   });
 }
-function renderAMMRates(){
-  const out = document.getElementById('ammRates');
-  if (!out) return;
-  out.innerHTML='';
-  const base = currencies[0];
-  let html = '<table><thead><tr><th>Pair</th><th>1 unit -> out</th></tr></thead><tbody>';
-  currencies.forEach(to=>{
-    if(to===base) return;
-    const amt=network.ammService.getAmountOut(base,to,1);
-    html += `<tr><td>${base}/${to}</td><td>${amt.toFixed(6)}</td></tr>`;
-  });
-  html += '</tbody></table>';
-  out.innerHTML = html;
-}
 function renderNetworkCanvas(){
   const c = document.getElementById('networkCanvas');
   if (!c) return;
@@ -1281,8 +1263,7 @@ function renderAllNetwork() {
     renderNodesList();
     renderNodesGrid();
     renderLiquidityTable();
-    renderAMMRates();
-    renderTransactions();
+    renderAmmMatrix();
     renderNetworkCanvas();
   }
 }
@@ -1353,9 +1334,6 @@ function populateDropdowns() {
   // Default values
   const liquidityCurrencySelect = document.getElementById('liquidityCurrency');
   if (liquidityCurrencySelect) liquidityCurrencySelect.value = 'USD';
-
-  const ammCurrencySelect = document.getElementById('ammCurrency');
-  if (ammCurrencySelect) ammCurrencySelect.value = 'USD';
 }
 // ========== MODAL FUNCTIONS ==========
 // Modal for transaction history (accounts/wallets/loans)
@@ -1438,6 +1416,7 @@ function renderAuditTable() {
     allEvents.push({
       timestamp: entry.timestamp,
       source: 'Network',
+      type: 'DLT Event',
       message: entry.message
     });
   });
@@ -1449,6 +1428,7 @@ function renderAuditTable() {
       allEvents.push({
         timestamp: tx.timestamp,
         source: city,
+        type: 'Business Transaction',
         message: `${tx.type}: ${tx.details}`
       });
     });
@@ -1460,7 +1440,7 @@ function renderAuditTable() {
   // Render the combined list, limited to the most recent 200 entries
   allEvents.slice(0, 200).forEach(entry => {
     const tr = document.createElement('tr');
-    tr.innerHTML = `<td>${entry.timestamp.toLocaleString()}</td><td>${entry.source}</td><td>${entry.message}</td>`;
+    tr.innerHTML = `<td>${entry.timestamp.toLocaleString()}</td><td>${entry.source}</td><td>${entry.type}</td><td>${entry.message}</td>`;
     tbody.appendChild(tr);
   });
 }
