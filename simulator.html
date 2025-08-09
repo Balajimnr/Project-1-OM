@@ -178,11 +178,6 @@
     margin-bottom: 10px;
   }
 
-  #liquidityChart {
-    max-width: 100%;
-    height: 300px;
-  }
-
   label {
     font-weight: 600;
     margin-right: 6px;
@@ -437,7 +432,8 @@
           <option value="week">Weekly</option>
           <option value="month" selected>Monthly</option>
         </select>
-        <button onclick="postInterest()">Post Now</button>
+        <button onclick="postInterest()">Post Interest</button>
+        <button onclick="postStakingYield()">Post Staking Yield</button>
       </div>
       <!-- Audit Trail -->
       <div class="menu-item" role="group" aria-label="Open audit trail modal" style="margin-left:auto;">
@@ -459,13 +455,11 @@
     <!-- Liquidity & AMM side by side -->
     <div id="ammLiquidityWrapper" aria-label="Liquidity Pool and AMM rates section">
       <section id="liquiditySection" tabindex="0" aria-label="Liquidity Pool balances">
-        <h3>Liquidity Pool</h3>
-        <label for="liquidityCurrency">Currency:</label>
-        <select id="liquidityCurrency" onchange="renderLiquidityAMMSection()" aria-label="Select currency for liquidity pool display"></select>
-        <canvas id="liquidityChart" width="900" height="400" aria-label="Liquidity pool chart"></canvas>
+        <h3>Wallet Balances by Country</h3>
+        <div id="walletBalanceMatrix"></div>
       </section>
       <section id="ammSection" tabindex="0" aria-label="Automated Market Maker rates">
-        <h3>AMM Rates</h3>
+        <h3>AMM Cross-Currency Rate Matrix</h3>
         <div id="ammMatrix"></div>
       </section>
     </div>
@@ -473,13 +467,31 @@
     <!-- Interest Rate Table -->
     <div id="interestRateWrapper">
         <section class="dashboard-section">
-            <h3>Interest Rates (Credit/Debit)</h3>
+            <h3>Interest Rates</h3>
             <table id="interestRateTable" style="width:100%; margin-top:8px;">
                 <thead>
                     <tr>
                         <th>Currency</th>
-                        <th>Credit Rate</th>
-                        <th>Debit Rate</th>
+                        <th>Deposit Rate</th>
+                        <th>Lending Rate</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <!-- Will be populated by JavaScript -->
+                </tbody>
+            </table>
+        </section>
+    </div>
+
+    <!-- Staking Yield Table -->
+    <div id="stakingYieldWrapper">
+        <section class="dashboard-section">
+            <h3>Staking Yields (per period)</h3>
+            <table id="stakingYieldTable" style="width:100%; margin-top:8px;">
+                <thead>
+                    <tr>
+                        <th>Currency</th>
+                        <th>Yield Rate</th>
                     </tr>
                 </thead>
                 <tbody>
@@ -561,11 +573,17 @@ let sharedParticipants = {};
 let sharedLiquidityPool = {};
 let sharedAuditTrail = [];
 let currentActiveTab = 'crossborder';
-// Interest rates (per period)
+
 const INTEREST_RATES = {};
 currencies.forEach(c => {
   INTEREST_RATES[c] = { credit: 0.0001, debit: 0.0009 };
 });
+
+const STAKING_YIELDS = {};
+currencies.forEach(c => {
+    STAKING_YIELDS[c] = 0.0002; // Default 0.02% yield per period
+});
+
 // ========== SHARED WALLET SYSTEM ==========
 function initializeSharedSystem() {
   sharedParticipants = {};
@@ -580,6 +598,8 @@ function initializeSharedSystem() {
       loans: {},
       borrowed: {},
       transactions: [],
+      lastDepositInterestPostDate: new Date(),
+      lastStakingYieldPostDate: new Date(),
       // Network-specific properties
       mempool: [],
       chain: []
@@ -696,54 +716,8 @@ function transferFromUI() {
 
     if (isNaN(amount) || amount <= 0) { alert("Invalid amount."); return; }
 
-    const senderBalance = sharedParticipants[sender].wallets[currency];
-    if (senderBalance >= amount) {
-        // Sufficient funds, proceed with a simple transfer
-        const tx = new Transaction({ type: 'transfer', from: sender, to: receiver, currency: currency, amount: amount });
-        processTransaction(tx);
-        return;
-    }
-
-    // Insufficient funds, check if a swap is possible
-    const needed = amount - senderBalance;
-    const possibleSwaps = [];
-    for (const c of currencies) {
-        if (c === currency || sharedParticipants[sender].wallets[c] <= 0) continue;
-        const requiredInput = network.ammService.getAmountIn(c, currency, needed);
-        if (sharedParticipants[sender].wallets[c] >= requiredInput) {
-            possibleSwaps.push({ from: c, cost: requiredInput });
-        }
-    }
-
-    if (possibleSwaps.length > 0) {
-        const swapOptions = possibleSwaps.map(s => `${s.from} (cost: ~${s.cost.toFixed(2)})`).join(', ');
-        if (confirm(`Insufficient ${currency} balance. You can swap from other currencies. Perform swap?\nAvailable: ${swapOptions}`)) {
-            const fromSwapCurrency = prompt(`Enter currency to swap from (e.g., ${possibleSwaps.map(s=>s.from).join('/')}):`);
-            const selectedSwap = possibleSwaps.find(s => s.from === fromSwapCurrency);
-
-            if (selectedSwap) {
-                const swapTx = new Transaction({ type: 'swap', from: sender, to: sender, meta: { fromCurrency: selectedSwap.from, toCurrency: currency, amountIn: selectedSwap.cost } });
-                processTransaction(swapTx, () => {
-                    // After successful swap, perform the transfer
-                    const transferTx = new Transaction({ type: 'transfer', from: sender, to: receiver, currency: currency, amount: amount });
-                    processTransaction(transferTx);
-                });
-                return;
-            } else {
-                alert("Invalid currency selected for swap.");
-            }
-        }
-    }
-
-    // If swap is not possible or declined, attempt to borrow
-    if (sharedLiquidityPool[currency] >= needed) {
-        if(confirm(`Insufficient funds and swap was not performed. Do you want to borrow ${needed.toFixed(2)} ${currency} to complete the transfer?`)) {
-            const tx = new Transaction({ type: 'borrow_and_transfer', from: sender, to: receiver, currency: currency, amount: amount, meta: { borrowAmount: needed } });
-            processTransaction(tx);
-        }
-    } else {
-        alert(`Transfer failed: Insufficient funds, and not enough liquidity to swap or borrow.`);
-    }
+    const tx = new Transaction({ type: 'transfer', from: sender, to: receiver, currency: currency, amount: amount });
+    processTransaction(tx);
 }
 function burnTokensUI() {
   const participant = document.getElementById('burnParticipant').value;
@@ -775,43 +749,89 @@ function repayBorrowedUI() {
   processTransaction(tx);
 }
 function postInterest() {
-  // This action is complex to model as a single transaction.
-  // For now, it will remain a direct admin action.
   const freq = document.getElementById('interestFrequency').value;
   const now = new Date();
   cities.forEach(city => {
-    currencies.forEach(c => {
-      const borrowed = sharedParticipants[city].borrowed[c];
-      if(borrowed.amount <= 0) return;
-      const lastPost = borrowed.lastInterestPostDate || now;
-      const diffMs = now - lastPost;
-      let periods = 0;
+    const participant = sharedParticipants[city];
+    // --- New Deposit Interest Logic ---
+    const lastDepositPost = participant.lastDepositInterestPostDate || now;
+    const diffMsDeposit = now - lastDepositPost;
+    let depositPeriods = 0;
+    if(freq === 'hour') { depositPeriods = Math.floor(diffMsDeposit / (1000 * 60 * 60)); }
+    else { const diffDays = Math.floor(diffMsDeposit / (1000 * 60 * 60 * 24));
+        if(freq === 'day') depositPeriods = diffDays;
+        else if(freq === 'week') depositPeriods = Math.floor(diffDays / 7);
+        else if(freq === 'month') depositPeriods = Math.floor(diffDays / 30);
+    }
+    if (depositPeriods > 0) {
+        for (const c in participant.accounts) {
+            if (participant.accounts[c] > 0) {
+                const creditRate = INTEREST_RATES[c].credit;
+                const interest = participant.accounts[c] * creditRate * depositPeriods;
+                participant.accounts[c] += interest;
+                addSharedTransaction(city, 'Interest', `Received ${interest.toFixed(2)} ${c} deposit interest.`);
+            }
+        }
+        participant.lastDepositInterestPostDate = now;
+    }
 
-      if(freq === 'hour') {
-          const diffHours = Math.floor(diffMs / (1000 * 60 * 60));
-          periods = diffHours;
-      } else {
-          const diffDays = Math.floor(diffMs / (1000 * 60 * 60 * 24));
-          if(freq === 'day') periods = diffDays;
-          else if(freq === 'week') periods = Math.floor(diffDays / 7);
-          else if(freq === 'month') periods = Math.floor(diffDays / 30);
-      }
+    // --- Existing Loan Interest Logic ---
+    for (const c in participant.borrowed) {
+        const borrowed = participant.borrowed[c];
+        if(borrowed.amount <= 0) continue;
+        const lastLoanPost = borrowed.lastInterestPostDate || now;
+        const diffMsLoan = now - lastLoanPost;
+        let loanPeriods = 0;
+        if(freq === 'hour') { loanPeriods = Math.floor(diffMsLoan / (1000 * 60 * 60)); }
+        else { const diffDays = Math.floor(diffMsLoan / (1000 * 60 * 60 * 24));
+            if(freq === 'day') loanPeriods = diffDays;
+            else if(freq === 'week') loanPeriods = Math.floor(diffDays / 7);
+            else if(freq === 'month') loanPeriods = Math.floor(diffDays / 30);
+        }
 
-      if(periods <= 0) return;
-      const debitRate = INTEREST_RATES[c].debit;
-      const interest = borrowed.amount * debitRate * periods;
-      if(sharedParticipants[city].accounts[c] < interest) {
-        addSharedAudit(`${city} insufficient deposits to pay interest on borrowed ${c}. Interest accrued but unpaid.`);
-        return;
-      }
-      sharedParticipants[city].accounts[c] -= interest;
-      borrowed.amount += interest;
-      borrowed.lastInterestPostDate = now;
-      addSharedAudit(`Posted ${interest.toFixed(2)} ${c} interest for ${city} on borrowed amount over ${periods} ${freq}(s).`);
-      addSharedTransaction(city, 'Interest Posting', `Charged interest ${interest.toFixed(2)} ${c}`);
-    });
+        if(loanPeriods > 0) {
+            const debitRate = INTEREST_RATES[c].debit;
+            const interest = borrowed.amount * debitRate * loanPeriods;
+            borrowed.amount += interest; // Compound the interest onto the borrowed amount
+            participant.loans[c] += interest; // Update total loan account
+            borrowed.lastInterestPostDate = now;
+            addSharedAudit(`Posted ${interest.toFixed(2)} ${c} interest for ${city} on borrowed amount.`);
+            addSharedTransaction(city, 'Interest', `Charged ${interest.toFixed(2)} ${c} loan interest.`);
+        }
+    }
   });
   updateAllDisplays();
+}
+function postStakingYield() {
+    const freq = document.getElementById('interestFrequency').value;
+    const now = new Date();
+    cities.forEach(city => {
+        const participant = sharedParticipants[city];
+        const lastPost = participant.lastStakingYieldPostDate || now;
+        const diffMs = now - lastPost;
+        let periods = 0;
+
+        if(freq === 'hour') { periods = Math.floor(diffMs / (1000 * 60 * 60)); }
+        else { const diffDays = Math.floor(diffMs / (1000 * 60 * 60 * 24));
+            if(freq === 'day') periods = diffDays;
+            else if(freq === 'week') periods = Math.floor(diffDays / 7);
+            else if(freq === 'month') periods = Math.floor(diffDays / 30);
+        }
+
+        if (periods > 0) {
+            for (const c in participant.wallets) {
+                if (participant.wallets[c] > 0) {
+                    const yieldRate = STAKING_YIELDS[c];
+                    const yieldAmount = participant.wallets[c] * yieldRate * periods;
+                    participant.wallets[c] += yieldAmount;
+                    addSharedTransaction(city, 'Staking Yield', `Received ${yieldAmount.toFixed(2)} ${c} in staking yield.`);
+                }
+            }
+            participant.lastStakingYieldPostDate = now;
+        }
+    });
+    addSharedAudit('Staking yield calculation complete.');
+    updateAllDisplays();
 }
 // Dashboard Update Functions
 function updateDashboard() {
@@ -897,38 +917,36 @@ function toggleDetails(id) {
     if(expandable) expandable.textContent = '[+]';
   }
 }
-// Liquidity Chart and AMM Rendering
-let liquidityChart = null;
-function renderLiquidityChart() {
-  const currency = document.getElementById('liquidityCurrency').value;
-  const ctx = document.getElementById('liquidityChart').getContext('2d');
-  const labels = [...cities];
-  const data = labels.map(city => sharedParticipants[city].wallets[currency] / 1000000);
-  if (liquidityChart) liquidityChart.destroy();
-  liquidityChart = new Chart(ctx, {
-    type: 'bar',
-    data: {
-      labels,
-      datasets: [{
-        label: `Liquidity Pool Balances (${currency} units of 1 Million)`,
-        data,
-        backgroundColor: 'rgba(25, 118, 210, 0.6)'
-      }]
-    },
-    options: {
-      scales: {
-        y: { beginAtZero: true, ticks: { stepSize: 1 } }
-      },
-      plugins: {
-        legend: { display: true, position: 'top' }
-      },
-      responsive: false,
-      maintainAspectRatio: false
-    }
-  });
+// Liquidity & AMM Rendering
+function renderWalletBalanceMatrix() {
+    const container = document.getElementById('walletBalanceMatrix');
+    container.innerHTML = '';
+    const table = document.createElement('table');
+    table.style.width = '100%';
+    table.style.fontSize = '0.8rem';
+
+    const thead = document.createElement('thead');
+    let headerRow = '<tr><th>Country</th>';
+    currencies.forEach(c => headerRow += `<th>${c}</th>`);
+    headerRow += '</tr>';
+    thead.innerHTML = headerRow;
+    table.appendChild(thead);
+
+    const tbody = document.createElement('tbody');
+    cities.forEach(city => {
+        let rowHtml = `<tr><th>${city}</th>`;
+        currencies.forEach(c => {
+            const balance = sharedParticipants[city].wallets[c];
+            rowHtml += `<td>${balance.toFixed(2)}</td>`;
+        });
+        rowHtml += '</tr>';
+        tbody.innerHTML += rowHtml;
+    });
+    table.appendChild(tbody);
+    container.appendChild(table);
 }
 function renderLiquidityAMMSection() {
-  renderLiquidityChart();
+  renderWalletBalanceMatrix();
   renderAmmMatrix();
 }
 function renderAmmMatrix() {
@@ -1076,41 +1094,44 @@ class Network{
     const leader = this.nodes[this.currentLeader];
     const processedTxs = [];
 
-    // Process all transactions from the leader's mempool
     while(leader.mempool.length > 0) {
-        const tx = leader.mempool.pop(); // Process in LIFO order
-        processedTxs.push(tx);
+        processedTxs.push(leader.mempool.pop());
     }
 
     if (processedTxs.length === 0) {
         return { success: true, message: "No transactions in mempool." };
     }
 
+    let finalMessage = "";
+    let allSucceeded = true;
     let successfulTxs = 0;
-    // Apply all valid transactions to all nodes
+
     processedTxs.forEach(tx => {
         const validationResult = this.validateTransaction(tx);
         if (validationResult.valid) {
-            Object.values(this.nodes).forEach(node => {
-                this.applyTxToNode(node, tx);
-            });
+            Object.values(this.nodes).forEach(node => this.applyTxToNode(node, tx));
             addSharedAudit(`Transaction ${tx.id} (${tx.type}) was successfully processed.`);
             successfulTxs++;
         } else {
+            allSucceeded = false;
+            finalMessage = `Transaction Failed: ${validationResult.message}`; // Capture first failure message for modal
             addSharedAudit(`Transaction ${tx.id} (${tx.type}) failed: ${validationResult.message}`);
         }
     });
 
-    const message = `Consensus round by ${this.currentLeader} processed ${successfulTxs} of ${processedTxs.length} transactions.`;
-    this.audit.unshift({timestamp:new Date(), message: message});
-    addSharedAudit(message);
+    if (processedTxs.length > 1) {
+        finalMessage = `Consensus round processed ${successfulTxs} of ${processedTxs.length} transactions.`;
+    } else if (allSucceeded) {
+        finalMessage = 'Transaction Successful!';
+    }
 
-    // Rotate leader
+    this.audit.unshift({timestamp:new Date(), message: `Consensus round by ${this.currentLeader} processed ${successfulTxs}/${processedTxs.length} transactions.`});
+
     const idx = cities.indexOf(this.currentLeader);
     this.currentLeader = cities[(idx+1)%cities.length];
     recalcSharedLiquidityPool();
 
-    return { success: true, message: message };
+    return { success: allSucceeded, message: finalMessage };
   }
   validateTransaction(tx) {
     const participant = this.nodes[tx.from];
@@ -1318,8 +1339,6 @@ function renderAllNetwork() {
   if (network) {
     renderNodesList();
     renderNodesGrid();
-    renderLiquidityTable();
-    renderAmmMatrix();
     renderNetworkCanvas();
   }
 }
@@ -1333,6 +1352,7 @@ function updateAllDisplays() {
     updateDashboard();
     renderLiquidityAMMSection();
     renderInterestRateTable();
+    renderStakingYieldTable();
   } else if (currentActiveTab === 'network') {
     renderAllNetwork();
   }
@@ -1538,6 +1558,33 @@ function updateInterestRate(currency, type, value) {
     }
 }
 
+function renderStakingYieldTable() {
+    const tableBody = document.getElementById('stakingYieldTable').querySelector('tbody');
+    tableBody.innerHTML = ''; // Clear existing rows
+
+    for (const currency in STAKING_YIELDS) {
+        const yieldRate = STAKING_YIELDS[currency];
+        const row = document.createElement('tr');
+
+        row.innerHTML = `
+            <td>${currency}</td>
+            <td><input type="number" value="${yieldRate}" step="0.0001" onchange="updateStakingYield('${currency}', this.value)" style="width: 100px;"></td>
+        `;
+        tableBody.appendChild(row);
+    }
+}
+
+function updateStakingYield(currency, value) {
+    const rate = parseFloat(value);
+    if (!isNaN(rate) && rate >= 0) {
+        STAKING_YIELDS[currency] = rate;
+        addSharedAudit(`Updated ${currency} staking yield to ${rate}.`);
+    } else {
+        alert('Invalid staking yield. Please enter a non-negative number.');
+        renderStakingYieldTable(); // Re-render to show the old value
+    }
+}
+
 // ========== INITIALIZATION ==========
 function initializeSystem() {
   console.log("1. Starting system initialization...");
@@ -1552,6 +1599,7 @@ function initializeSystem() {
   renderLiquidityAMMSection();
   console.log("6. Liquidity/AMM section rendered.");
   renderInterestRateTable();
+  renderStakingYieldTable();
   renderAllNetwork();
   console.log("7. Full network rendered. Initialization complete.");
 }
