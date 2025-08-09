@@ -455,7 +455,7 @@
     <!-- Liquidity & AMM side by side -->
     <div id="ammLiquidityWrapper" aria-label="Liquidity Pool and AMM rates section">
       <section id="liquiditySection" tabindex="0" aria-label="Liquidity Pool balances">
-        <h3>Wallet Balances by Country</h3>
+        <h3>Liquidity pool</h3>
         <div id="walletBalanceMatrix"></div>
       </section>
       <section id="ammSection" tabindex="0" aria-label="Automated Market Maker rates">
@@ -716,8 +716,35 @@ function transferFromUI() {
 
     if (isNaN(amount) || amount <= 0) { alert("Invalid amount."); return; }
 
-    const tx = new Transaction({ type: 'transfer', from: sender, to: receiver, currency: currency, amount: amount });
-    processTransaction(tx);
+    const senderWallet = sharedParticipants[sender].wallets[currency];
+    if (senderWallet >= amount) {
+        // Sufficient funds, proceed with a normal transfer
+        const tx = new Transaction({ type: 'transfer', from: sender, to: receiver, currency: currency, amount: amount });
+        processTransaction(tx);
+    } else {
+        // Insufficient funds, prompt for borrowing
+        const needed = amount - senderWallet;
+        // Recalculate liquidity pool to get the most current value before checking
+        recalcSharedLiquidityPool();
+        const availableToBorrow = sharedLiquidityPool[currency];
+
+        if (availableToBorrow < needed) {
+            alert(`Insufficient funds. You have ${senderWallet.toFixed(2)}, need ${amount.toFixed(2)}. Only ${availableToBorrow.toFixed(2)} available to borrow in the pool.`);
+            return;
+        }
+
+        if (confirm(`Insufficient funds. Do you want to borrow ${needed.toFixed(2)} ${currency} to complete the transfer?`)) {
+            const tx = new Transaction({
+                type: 'borrow_and_transfer',
+                from: sender,
+                to: receiver,
+                currency: currency,
+                amount: amount,
+                meta: { borrowAmount: needed }
+            });
+            processTransaction(tx);
+        }
+    }
 }
 function burnTokensUI() {
   const participant = document.getElementById('burnParticipant').value;
@@ -920,29 +947,52 @@ function toggleDetails(id) {
 // Liquidity & AMM Rendering
 function renderWalletBalanceMatrix() {
     const container = document.getElementById('walletBalanceMatrix');
-    container.innerHTML = '';
+    container.innerHTML = ''; // Clear previous content
     const table = document.createElement('table');
     table.style.width = '100%';
     table.style.fontSize = '0.8rem';
 
-    const thead = document.createElement('thead');
-    let headerRow = '<tr><th>Country</th>';
-    currencies.forEach(c => headerRow += `<th>${c}</th>`);
-    headerRow += '</tr>';
-    thead.innerHTML = headerRow;
-    table.appendChild(thead);
+    // Table Header
+    const thead = table.createTHead();
+    const headerRow = thead.insertRow();
+    const th = document.createElement('th');
+    th.textContent = 'Country';
+    headerRow.appendChild(th);
+    currencies.forEach(c => {
+        const th = document.createElement('th');
+        th.textContent = c;
+        headerRow.appendChild(th);
+    });
 
-    const tbody = document.createElement('tbody');
+    // Table Body
+    const tbody = table.createTBody();
+    const currencyTotals = currencies.reduce((acc, c) => ({ ...acc, [c]: 0 }), {});
+
     cities.forEach(city => {
-        let rowHtml = `<tr><th>${city}</th>`;
+        const row = tbody.insertRow();
+        const th = document.createElement('th');
+        th.textContent = city;
+        row.appendChild(th);
         currencies.forEach(c => {
             const balance = sharedParticipants[city].wallets[c];
-            rowHtml += `<td>${balance.toFixed(2)}</td>`;
+            currencyTotals[c] += balance;
+            const cell = row.insertCell();
+            cell.textContent = balance.toFixed(2);
         });
-        rowHtml += '</tr>';
-        tbody.innerHTML += rowHtml;
     });
-    table.appendChild(tbody);
+
+    // Table Footer with Totals
+    const tfoot = table.createTFoot();
+    const footerRow = tfoot.insertRow();
+    const totalTh = document.createElement('th');
+    totalTh.textContent = 'Total';
+    footerRow.appendChild(totalTh);
+    currencies.forEach(c => {
+        const cell = footerRow.insertCell();
+        cell.textContent = currencyTotals[c].toFixed(2);
+        cell.style.fontWeight = 'bold';
+    });
+
     container.appendChild(table);
 }
 function renderLiquidityAMMSection() {
@@ -1016,51 +1066,50 @@ class LiquidityPoolService{
 class AMMService{
   constructor(liquidity){ this.liquidity = liquidity; }
   getAmountOut(fromCurrency, toCurrency, amountIn){
-    const poolFrom = this.liquidity.pool[fromCurrency];
     // If toCurrency is null, get all rates
     if (toCurrency === null) {
         const results = {};
         currencies.forEach(c => {
             if (c === fromCurrency) return;
-            const poolTo = this.liquidity.pool[c];
-            if (!poolFrom || !poolTo) {
-                results[c] = 0;
-                return;
-            }
-            const amountInWithFee = amountIn * 0.997;
-            const k = poolFrom * poolTo;
-            const newPoolFrom = poolFrom + amountInWithFee;
-            const newPoolTo = k / newPoolFrom;
-            results[c] = poolTo - newPoolTo;
+            results[c] = this.getAmountOut(fromCurrency, c, amountIn);
         });
         return results;
     }
-    // Original logic for single pair
-    const poolTo = this.liquidity.pool[toCurrency];
-    if(!poolFrom || !poolTo) return 0;
-    const amountInWithFee = amountIn * 0.997;
-    const k = poolFrom * poolTo;
-    const newPoolFrom = poolFrom + amountInWithFee;
-    const newPoolTo = k / newPoolFrom;
-    const amountOut = poolTo - newPoolTo;
-    return amountOut;
-  }
-  getAmountIn(fromCurrency, toCurrency, amountOut) {
+
     const poolFrom = this.liquidity.pool[fromCurrency];
     const poolTo = this.liquidity.pool[toCurrency];
-    if (!poolFrom || !poolTo || poolTo <= amountOut) return Infinity;
+    if(!poolFrom || !poolTo) return 0;
 
+    // Constant Sum: amountOut = amountIn
+    const amountOut_sum = amountIn;
+
+    // Constant Product
     const k = poolFrom * poolTo;
-    const fee = 0.997;
+    const newPoolFrom = poolFrom + amountIn;
+    const newPoolTo = k / newPoolFrom;
+    const amountOut_prod = poolTo - newPoolTo;
 
-    const newPoolTo = poolTo - amountOut;
-    const newPoolFrom = k / newPoolTo;
-    const amountInWithFee = newPoolFrom - poolFrom;
+    // Simple average, no fee for this model as per "remove slippage"
+    return (amountOut_sum + amountOut_prod) / 2;
+  }
+  getAmountIn(fromCurrency, toCurrency, amountOut) {
+    // Iterative approximation to find amountIn for the hybrid model
+    let low = 0;
+    let high = (this.liquidity.pool[fromCurrency] || 1) * 2; // Start with a high guess
+    let mid, calc_out;
 
-    if (amountInWithFee <= 0) return Infinity;
-
-    const amountIn = amountInWithFee / fee;
-    return amountIn;
+    for (let i = 0; i < 50; i++) { // 50 iterations for precision
+        mid = (low + high) / 2;
+        if (mid === 0) { low = 0; high = 0; break; }
+        calc_out = this.getAmountOut(fromCurrency, toCurrency, mid);
+        if (calc_out > amountOut) {
+            high = mid;
+        } else {
+            low = mid;
+        }
+    }
+    const requiredAmount = (low + high) / 2;
+    return requiredAmount > 0 ? requiredAmount : Infinity;
   }
 }
 class Network{
@@ -1089,32 +1138,34 @@ class Network{
     this.audit.unshift({timestamp:new Date(), message:`Broadcast ${tx.type} ${tx.id}`});
     addSharedAudit(`Network broadcast ${tx.type} ${tx.id}`);
   }
-  runConsensus(){
+  runConsensus() {
     this.syncLiquidityService();
     const leader = this.nodes[this.currentLeader];
     const processedTxs = [];
 
-    while(leader.mempool.length > 0) {
-        processedTxs.push(leader.mempool.pop());
+    // Process all transactions from the leader's mempool
+    while (leader.mempool.length > 0) {
+        const tx = leader.mempool.pop(); // Process in LIFO order
+        processedTxs.push(tx);
     }
 
     if (processedTxs.length === 0) {
         return { success: true, message: "No transactions in mempool." };
     }
 
+    let successfulTxs = 0;
     let finalMessage = "";
     let allSucceeded = true;
-    let successfulTxs = 0;
 
     processedTxs.forEach(tx => {
         const validationResult = this.validateTransaction(tx);
         if (validationResult.valid) {
-            Object.values(this.nodes).forEach(node => this.applyTxToNode(node, tx));
+            this.executeTransaction(tx); // Centralized execution
             addSharedAudit(`Transaction ${tx.id} (${tx.type}) was successfully processed.`);
             successfulTxs++;
         } else {
             allSucceeded = false;
-            finalMessage = `Transaction Failed: ${validationResult.message}`; // Capture first failure message for modal
+            finalMessage = `Transaction Failed: ${validationResult.message}`;
             addSharedAudit(`Transaction ${tx.id} (${tx.type}) failed: ${validationResult.message}`);
         }
     });
@@ -1125,14 +1176,15 @@ class Network{
         finalMessage = 'Transaction Successful!';
     }
 
-    this.audit.unshift({timestamp:new Date(), message: `Consensus round by ${this.currentLeader} processed ${successfulTxs}/${processedTxs.length} transactions.`});
+    this.audit.unshift({ timestamp: new Date(), message: `Consensus round by ${this.currentLeader} processed ${successfulTxs}/${processedTxs.length} transactions.` });
 
     const idx = cities.indexOf(this.currentLeader);
-    this.currentLeader = cities[(idx+1)%cities.length];
+    this.currentLeader = cities[(idx + 1) % cities.length];
     recalcSharedLiquidityPool();
 
     return { success: allSucceeded, message: finalMessage };
   }
+
   validateTransaction(tx) {
     const participant = this.nodes[tx.from];
     if (!participant) {
@@ -1156,7 +1208,7 @@ class Network{
             const balance = participant.wallets[tx.currency];
             if (balance < tx.amount) {
                 const needed = tx.amount - balance;
-                if (sharedLiquidityPool[tx.currency] < needed) {
+                if (this.liquidityService.pool[tx.currency] < needed) {
                     return { valid: false, message: `Insufficient liquidity to borrow ${needed.toFixed(2)}.` };
                 }
             }
@@ -1185,63 +1237,106 @@ class Network{
     // If no validation fails, the transaction is valid.
     return { valid: true };
   }
-  applyTxToNode(node, tx) {
-    if(node.chain.some(t=>t.id===tx.id)) return;
 
-    const participant = node;
-    switch(tx.type){
-      case 'tokenize':
-        if (participant.name === tx.from) {
-            participant.accounts[tx.currency] -= tx.amount;
-            participant.wallets[tx.currency] += tx.amount;
-            addSharedTransaction(participant.name, 'Tokenize', `Tokenized ${tx.amount.toFixed(2)} ${tx.currency}`);
+  executeTransaction(tx) {
+    // This function modifies the shared state directly (this.nodes)
+    // It is called once per transaction by the consensus leader.
+
+    // Handle special case of borrow_and_transfer first as it affects all nodes.
+    if (tx.type === 'borrow_and_transfer') {
+        const { borrowAmount } = tx.meta;
+        const currency = tx.currency;
+        const totalLiquidity = this.liquidityService.pool[currency];
+        const borrowerNode = this.nodes[tx.from];
+        const receiverNode = this.nodes[tx.to];
+
+        // Debit all liquidity providers proportionally
+        if (totalLiquidity > 0) {
+            Object.values(this.nodes).forEach(p_node => {
+                const contribution = p_node.wallets[currency];
+                if (contribution > 0) {
+                    const proportion = contribution / totalLiquidity;
+                    const debitAmount = borrowAmount * proportion;
+                    p_node.wallets[currency] -= debitAmount;
+                    addSharedTransaction(p_node.name, 'Liquidity Debit', `Provided ${debitAmount.toFixed(2)} ${currency} for loan to ${tx.from}`);
+                }
+            });
         }
-        break;
-      case 'transfer':
-      case 'borrow_and_transfer':
-        if (participant.name === tx.from) {
-            if (tx.type === 'borrow_and_transfer') {
-                participant.wallets[tx.currency] += tx.meta.borrowAmount;
-                participant.loans[tx.currency] += tx.meta.borrowAmount;
-                participant.borrowed[tx.currency].amount += tx.meta.borrowAmount;
-                addSharedTransaction(participant.name, 'Borrow', `Auto-borrowed ${tx.meta.borrowAmount.toFixed(2)} ${tx.currency} for transfer.`);
+
+        // Update borrower's accounts
+        borrowerNode.loans[currency] += borrowAmount;
+        borrowerNode.borrowed[currency].amount += borrowAmount;
+        addSharedTransaction(tx.from, 'Borrow', `Borrowed ${borrowAmount.toFixed(2)} ${currency}`);
+
+        // Execute the transfer
+        borrowerNode.wallets[currency] += borrowAmount; // Explicitly add borrowed funds to wallet
+        borrowerNode.wallets[currency] -= tx.amount;   // Then subtract the full transfer amount
+        addSharedTransaction(tx.from, 'Transfer Out', `Transferred ${tx.amount.toFixed(2)} ${tx.currency} to ${tx.to}`);
+
+        receiverNode.wallets[currency] += tx.amount;
+        addSharedTransaction(tx.to, 'Transfer In', `Received ${tx.amount.toFixed(2)} ${tx.currency} from ${tx.from}`);
+
+        // Add to chain for all nodes
+        Object.values(this.nodes).forEach(node => {
+            if (!node.chain.some(t => t.id === tx.id)) {
+                node.chain.unshift(tx);
             }
-            participant.wallets[tx.currency] -= tx.amount;
-            addSharedTransaction(participant.name, 'Transfer Out', `Transferred ${tx.amount.toFixed(2)} ${tx.currency} to ${tx.to}`);
-        }
-        if (participant.name === tx.to) {
-            participant.wallets[tx.currency] += tx.amount;
-            addSharedTransaction(participant.name, 'Transfer In', `Received ${tx.amount.toFixed(2)} ${tx.currency} from ${tx.from}`);
-        }
-        break;
-      case 'burn':
-        if (participant.name === tx.from) {
-            participant.wallets[tx.currency] -= tx.amount;
-            participant.accounts[tx.currency] += tx.amount;
-            addSharedTransaction(participant.name, 'Burn', `Burned ${tx.amount.toFixed(2)} ${tx.currency}`);
-        }
-        break;
-      case 'swap':
-        if (participant.name === tx.from) {
-            const { fromCurrency, toCurrency, amountIn } = tx.meta;
-            const amountOut = this.ammService.getAmountOut(fromCurrency, toCurrency, amountIn);
-            if (amountOut > 0) {
-                participant.wallets[fromCurrency] -= amountIn;
-                participant.wallets[toCurrency] += amountOut;
-                addSharedTransaction(participant.name, 'Swap', `Swapped ${amountIn.toFixed(2)} ${fromCurrency} to ${amountOut.toFixed(2)} ${toCurrency}`);
-            }
-        }
-        break;
-      case 'repay':
-          if (participant.name === tx.from) {
-              participant.wallets[tx.currency] -= tx.amount;
-              participant.borrowed[tx.currency].amount -= tx.amount;
-              participant.loans[tx.currency] -= tx.amount;
-              addSharedTransaction(participant.name, 'Repay', `Repaid ${tx.amount.toFixed(2)} ${tx.currency}`);
-          }
-          break;
+        });
+        return; // End execution for this tx type
     }
-    node.chain.unshift(tx);
+
+    // Apply all other transaction types to nodes' chains and update balances
+    Object.values(this.nodes).forEach(node => {
+        if (node.chain.some(t => t.id === tx.id)) return; // Already processed
+
+        const participant = node;
+        switch (tx.type) {
+            case 'tokenize':
+                if (participant.name === tx.from) {
+                    participant.accounts[tx.currency] -= tx.amount;
+                    participant.wallets[tx.currency] += tx.amount;
+                    addSharedTransaction(participant.name, 'Tokenize', `Tokenized ${tx.amount.toFixed(2)} ${tx.currency}`);
+                }
+                break;
+            case 'transfer':
+                if (participant.name === tx.from) {
+                    participant.wallets[tx.currency] -= tx.amount;
+                    addSharedTransaction(participant.name, 'Transfer Out', `Transferred ${tx.amount.toFixed(2)} ${tx.currency} to ${tx.to}`);
+                }
+                if (participant.name === tx.to) {
+                    participant.wallets[tx.currency] += tx.amount;
+                    addSharedTransaction(participant.name, 'Transfer In', `Received ${tx.amount.toFixed(2)} ${tx.currency} from ${tx.from}`);
+                }
+                break;
+            case 'burn':
+                if (participant.name === tx.from) {
+                    participant.wallets[tx.currency] -= tx.amount;
+                    participant.accounts[tx.currency] += tx.amount;
+                    addSharedTransaction(participant.name, 'Burn', `Burned ${tx.amount.toFixed(2)} ${tx.currency}`);
+                }
+                break;
+            case 'swap':
+                if (participant.name === tx.from) {
+                    const { fromCurrency, toCurrency, amountIn } = tx.meta;
+                    const amountOut = this.ammService.getAmountOut(fromCurrency, toCurrency, amountIn);
+                    if (amountOut > 0) {
+                        participant.wallets[fromCurrency] -= amountIn;
+                        participant.wallets[toCurrency] += amountOut;
+                        addSharedTransaction(participant.name, 'Swap', `Swapped ${amountIn.toFixed(2)} ${fromCurrency} to ${amountOut.toFixed(2)} ${toCurrency}`);
+                    }
+                }
+                break;
+            case 'repay':
+                if (participant.name === tx.from) {
+                    participant.wallets[tx.currency] -= tx.amount;
+                    participant.borrowed[tx.currency].amount -= tx.amount;
+                    participant.loans[tx.currency] -= tx.amount;
+                    addSharedTransaction(participant.name, 'Repay', `Repaid ${tx.amount.toFixed(2)} ${tx.currency}`);
+                }
+                break;
+        }
+        node.chain.unshift(tx);
+    });
   }
 }
 let network;
@@ -1279,16 +1374,6 @@ function renderNodesGrid(){
     inner += `</div><div style='margin-top:8px'><button onclick="inspectNode('${city}')">Inspect</button></div>`;
     card.innerHTML = inner;
     grid.appendChild(card);
-  });
-}
-function renderLiquidityTable(){
-  const tbody = document.getElementById('liqTable');
-  if (!tbody) return;
-  tbody.innerHTML='';
-  currencies.forEach(c=>{
-    const tr=document.createElement('tr');
-    tr.innerHTML = `<td>${c}</td><td>${(network.liquidityService.pool[c]||0).toFixed(2)}</td>`;
-    tbody.appendChild(tr);
   });
 }
 function renderNetworkCanvas(){
@@ -1339,23 +1424,28 @@ function renderAllNetwork() {
   if (network) {
     renderNodesList();
     renderNodesGrid();
+    renderAmmMatrix();
     renderNetworkCanvas();
   }
 }
 // ========== SHARED FUNCTIONS ==========
 function updateAllDisplays() {
+  console.log("Updating all displays...");
   recalcSharedLiquidityPool();
   if (network) {
     network.syncLiquidityService();
   }
   if (currentActiveTab === 'crossborder') {
+    console.log("Rendering Cross Border Tab");
     updateDashboard();
     renderLiquidityAMMSection();
     renderInterestRateTable();
     renderStakingYieldTable();
   } else if (currentActiveTab === 'network') {
+    console.log("Rendering DLT Network Tab");
     renderAllNetwork();
   }
+  console.log("Display update complete.");
 }
 function populateDropdowns() {
   const participantSelects = ['tokenizeParticipant', 'sender', 'receiver', 'burnParticipant', 'ammParticipant', 'repayParticipant'];
