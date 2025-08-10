@@ -408,8 +408,9 @@
       <!-- Repay Borrowed -->
       <div class="menu-item" role="group" aria-label="Repay borrowed funds">
         <label for="repayParticipant">Repay:</label>
-        <select id="repayParticipant" aria-label="Participant repaying borrowed funds"></select>
-        <select id="repayCurrency" aria-label="Currency to repay"></select>
+        <select id="repayParticipant" aria-label="Participant repaying borrowed funds" onchange="populateLoanDropdown()"></select>
+        <select id="repayCurrency" aria-label="Currency to repay" onchange="populateLoanDropdown()"></select>
+        <select id="repayLoanId" aria-label="Loan to repay"></select>
         <input type="number" id="repayAmount" placeholder="Amount" min="0" step="any" aria-label="Amount to repay" />
         <button onclick="repayBorrowedUI()">Go</button>
       </div>
@@ -606,9 +607,10 @@ function initializeSharedSystem() {
         sharedParticipants[city].accounts[c] = 0;
       }
       sharedParticipants[city].wallets[c] = 0;
-      sharedParticipants[city].loans[c] = 0;
-      sharedParticipants[city].borrowed[c] = { amount: 0, lastInterestPostDate: new Date() };
     });
+    // Loans and borrowed are no longer per-currency objects, but arrays of loan objects.
+    sharedParticipants[city].loans = [];
+    sharedParticipants[city].borrowed = [];
   });
   recalcSharedLiquidityPool();
 }
@@ -781,34 +783,64 @@ function crossCurrencyTransfer() {
   const tx = new Transaction({ type: 'swap', from: participant, to: participant, meta: { fromCurrency: fromCurrency, toCurrency: toCurrency, amountIn: amount } });
   processTransaction(tx);
 }
-function repayBorrowedUI() {
-    recalcSharedLiquidityPool(); // Recalculate pool at the start of any action
+function populateLoanDropdown() {
     const participantName = document.getElementById('repayParticipant').value;
     const currency = document.getElementById('repayCurrency').value;
+    const loanDropdown = document.getElementById('repayLoanId');
+    loanDropdown.innerHTML = '';
+
+    const participant = sharedParticipants[participantName];
+    const outstandingLoans = participant.borrowed.filter(loan => loan.currency === currency && loan.totalAmount > 0);
+
+    if (outstandingLoans.length === 0) {
+        const opt = document.createElement('option');
+        opt.textContent = 'No outstanding loans';
+        loanDropdown.appendChild(opt);
+        loanDropdown.disabled = true;
+    } else {
+        outstandingLoans.forEach(loan => {
+            const opt = document.createElement('option');
+            opt.value = loan.loanId;
+            opt.textContent = `ID: ${loan.loanId.slice(0, 6)}... (${loan.totalAmount.toFixed(2)} ${loan.currency})`;
+            loanDropdown.appendChild(opt);
+        });
+        loanDropdown.disabled = false;
+    }
+}
+
+function repayBorrowedUI() {
+    recalcSharedLiquidityPool();
+    const participantName = document.getElementById('repayParticipant').value;
+    const loanId = document.getElementById('repayLoanId').value;
     const amount = parseFloat(document.getElementById('repayAmount').value);
+
+    if (!loanId || loanId === 'No outstanding loans') {
+        alert("Please select a valid loan to repay.");
+        return;
+    }
     if(isNaN(amount) || amount <= 0) { alert("Invalid repay amount."); return; }
 
     const participant = sharedParticipants[participantName];
-    const maxRepayAmount = participant.borrowed[currency].amount;
-    const repayAmount = Math.min(amount, maxRepayAmount);
+    const loanToRepay = participant.borrowed.find(l => l.loanId === loanId);
 
-    if (repayAmount <= 0) {
-        alert("No outstanding loan in this currency or invalid amount.");
+    if (!loanToRepay) {
+        alert("Selected loan not found.");
         return;
     }
 
+    const currency = loanToRepay.currency;
+    const repayAmount = Math.min(amount, loanToRepay.totalAmount);
     const walletBalance = participant.wallets[currency];
 
     // Case 1: Sufficient funds for repayment
     if (walletBalance >= repayAmount) {
-        const tx = new Transaction({ type: 'repay', from: participantName, to: participantName, currency: currency, amount: repayAmount });
+        const tx = new Transaction({ type: 'repay', from: participantName, to: participantName, currency: currency, amount: repayAmount, meta: { loanId: loanId } });
         processTransaction(tx);
         return;
     }
 
     // Case 2: Insufficient funds, try to swap
     const neededFromWallet = repayAmount - walletBalance;
-
     let bestSwapCandidate = null;
     let maxBalance = 0;
     for (const c in participant.wallets) {
@@ -819,7 +851,7 @@ function repayBorrowedUI() {
     }
 
     if (bestSwapCandidate) {
-        network.syncLiquidityService(); // Ensure AMM service has latest liquidity
+        network.syncLiquidityService();
         const amountNeededFromSwap = network.ammService.getAmountIn(bestSwapCandidate, currency, neededFromWallet);
         if (participant.wallets[bestSwapCandidate] >= amountNeededFromSwap) {
             if (confirm(`You have an insufficient ${currency} balance to repay. Swap ~${amountNeededFromSwap.toFixed(2)} ${bestSwapCandidate} to proceed?`)) {
@@ -830,6 +862,7 @@ function repayBorrowedUI() {
                     currency: currency,
                     amount: repayAmount,
                     meta: {
+                        loanId: loanId,
                         swapFrom: bestSwapCandidate,
                         swapAmountIn: amountNeededFromSwap
                     }
@@ -888,7 +921,7 @@ function postInterest() {
             const debitRate = INTEREST_RATES[c].debit;
             const interest = borrowed.amount * debitRate * loanPeriods;
             borrowed.amount += interest; // Compound the interest onto the borrowed amount
-            participant.loans[c] += interest; // Update total loan account
+            // participant.loans[c] += interest; // TODO: Refactor this for new data model
             borrowed.lastInterestPostDate = now;
             addSharedAudit(`Posted ${interest.toFixed(2)} ${c} interest for ${city} on borrowed amount.`);
             addSharedTransaction(city, 'Interest', `Charged ${interest.toFixed(2)} ${c} loan interest.`);
@@ -978,24 +1011,20 @@ function updateDashboard() {
   });
   // Loans
   const loansDiv = document.getElementById('loansSection');
-  loansDiv.innerHTML = '<h3>Loan Accounts</h3>';
+  loansDiv.innerHTML = '<h3>Loan Accounts (Borrowed)</h3>';
   cities.forEach(city => {
+    const participant = sharedParticipants[city];
     const div = document.createElement('div');
     div.style.marginBottom = '10px';
-    div.innerHTML = `<strong>${city} (${sovereigns[city]})</strong> <span class="expandable" onclick="toggleDetails('${city}-loans')">[+]</span>`;
+
+    const totalBorrowed = participant.borrowed.reduce((sum, loan) => sum + loan.totalAmount, 0);
+    const loanCount = participant.borrowed.length;
+
+    div.innerHTML = `<strong>${city} (${sovereigns[city]})</strong>`;
     const details = document.createElement('div');
-    details.id = `${city}-loans`;
-    details.className = 'hidden';
     details.style.marginLeft = '12px';
-    currencies.forEach(c => {
-      const val = sharedParticipants[city].loans[c];
-      const a = document.createElement('a');
-      a.href = "#";
-      a.textContent = `${c}: ${val.toFixed(2)}`;
-      a.onclick = (e) => { e.preventDefault(); openModal(city, 'loan', c); };
-      details.appendChild(a);
-      details.appendChild(document.createElement('br'));
-    });
+    details.innerHTML = `<span>Outstanding Loans: ${loanCount}</span><br>
+                         <span>Total Value: ${totalBorrowed.toFixed(2)}</span>`;
     div.appendChild(details);
     loansDiv.appendChild(div);
   });
@@ -1384,32 +1413,76 @@ class Network{
                 addSharedTransaction(tx.from, 'Swap', `Swapped ${amountIn.toFixed(2)} ${fromCurrency} for ${amountOut.toFixed(2)} ${toCurrency}`);
             }
             break;
-        case 'repay':
+        case 'repay': {
+            const { loanId } = tx.meta;
+            const loanIndex = from.borrowed.findIndex(l => l.loanId === loanId);
+            if (loanIndex === -1) break;
+
+            const loan = from.borrowed[loanIndex];
+            const originalTotal = loan.lenders.reduce((sum, l) => sum + l.amount, 0);
+
+            // Credit lenders proportionally
+            loan.lenders.forEach(lender => {
+                const proportion = lender.amount / originalTotal;
+                const creditAmount = tx.amount * proportion;
+                this.nodes[lender.name].wallets[tx.currency] += creditAmount;
+                addSharedTransaction(lender.name, 'Repayment Received', `Received ${creditAmount.toFixed(2)} ${tx.currency} for loan ${loanId}`);
+            });
+
+            // Debit borrower
             from.wallets[tx.currency] -= tx.amount;
-            from.borrowed[tx.currency].amount -= tx.amount;
-            from.loans[tx.currency] -= tx.amount;
-            addSharedTransaction(tx.from, 'Repay', `Repaid ${tx.amount.toFixed(2)} ${tx.currency}`);
+            addSharedTransaction(tx.from, 'Repay', `Repaid ${tx.amount.toFixed(2)} ${tx.currency} for loan ${loanId}`);
+
+            // Update loan records for borrower and lenders
+            from.borrowed[loanIndex].totalAmount -= tx.amount;
+            if (from.borrowed[loanIndex].totalAmount <= 0.01) { // If fully paid
+                from.borrowed.splice(loanIndex, 1);
+                // Remove from all lenders' records
+                Object.values(this.nodes).forEach(node => {
+                    node.loans = node.loans.filter(l => l.loanId !== loanId);
+                });
+            }
             break;
+        }
         case 'borrow_and_transfer':
             const { borrowAmount } = tx.meta;
             const totalLiquidity = this.liquidityService.pool[tx.currency];
+            const loanId = 'loan-' + Math.random().toString(36).slice(2, 11);
 
-            // Debit all providers proportionally
+            const lenders = [];
+            // Debit all providers proportionally and record them as lenders
             if (totalLiquidity > 0) {
                 Object.values(this.nodes).forEach(p_node => {
                     const contribution = p_node.wallets[tx.currency];
                     if (contribution > 0) {
                         const proportion = contribution / totalLiquidity;
-                        p_node.wallets[tx.currency] -= borrowAmount * proportion;
-                        addSharedTransaction(p_node.name, 'Liquidity Debit', `Provided ${(borrowAmount * proportion).toFixed(2)} ${tx.currency} for loan to ${tx.from}`);
+                        const amountLent = borrowAmount * proportion;
+                        p_node.wallets[tx.currency] -= amountLent;
+
+                        const lenderRecord = { name: p_node.name, amount: amountLent };
+                        lenders.push(lenderRecord);
+
+                        // Add a record to the lender's "loans" array
+                        this.nodes[p_node.name].loans.push({
+                            loanId: loanId,
+                            currency: tx.currency,
+                            amountLent: amountLent,
+                            borrower: tx.from
+                        });
+                        addSharedTransaction(p_node.name, 'Lend', `Lent ${amountLent.toFixed(2)} ${tx.currency} for loan ${loanId}`);
                     }
                 });
             }
 
-            // Update borrower's accounts
-            from.loans[tx.currency] += borrowAmount;
-            from.borrowed[tx.currency].amount += borrowAmount;
-            addSharedTransaction(tx.from, 'Borrow', `Borrowed ${borrowAmount.toFixed(2)} ${tx.currency}`);
+            // Add the new loan object to the borrower's "borrowed" array
+            from.borrowed.push({
+                loanId: loanId,
+                currency: tx.currency,
+                totalAmount: borrowAmount,
+                lenders: lenders,
+                lastInterestPostDate: new Date()
+            });
+            addSharedTransaction(tx.from, 'Borrow', `Borrowed ${borrowAmount.toFixed(2)} ${tx.currency} (Loan: ${loanId})`);
 
             // Execute the transfer
             from.wallets[tx.currency] += borrowAmount;
@@ -1418,6 +1491,41 @@ class Network{
             addSharedTransaction(tx.from, 'Transfer Out', `Transferred ${tx.amount.toFixed(2)} ${tx.currency} to ${tx.to}`);
             addSharedTransaction(tx.to, 'Transfer In', `Received ${tx.amount.toFixed(2)} ${tx.currency} from ${tx.from}`);
             break;
+        case 'swap_and_repay': {
+            const { loanId, swapFrom, swapAmountIn } = tx.meta;
+
+            // 1. Perform Swap
+            const swapAmountOut = this.ammService.getAmountOut(swapFrom, tx.currency, swapAmountIn);
+            from.wallets[swapFrom] -= swapAmountIn;
+            from.wallets[tx.currency] += swapAmountOut;
+            addSharedTransaction(tx.from, 'Swap', `Swapped ${swapAmountIn.toFixed(2)} ${swapFrom} for repayment`);
+
+            // 2. Perform Repayment (logic is identical to 'repay' case)
+            const loanIndex = from.borrowed.findIndex(l => l.loanId === loanId);
+            if (loanIndex === -1) break;
+
+            const loan = from.borrowed[loanIndex];
+            const originalTotal = loan.lenders.reduce((sum, l) => sum + l.amount, 0);
+
+            loan.lenders.forEach(lender => {
+                const proportion = lender.amount / originalTotal;
+                const creditAmount = tx.amount * proportion;
+                this.nodes[lender.name].wallets[tx.currency] += creditAmount;
+                addSharedTransaction(lender.name, 'Repayment Received', `Received ${creditAmount.toFixed(2)} ${tx.currency} for loan ${loanId}`);
+            });
+
+            from.wallets[tx.currency] -= tx.amount;
+            addSharedTransaction(tx.from, 'Repay', `Repaid ${tx.amount.toFixed(2)} ${tx.currency} for loan ${loanId}`);
+
+            from.borrowed[loanIndex].totalAmount -= tx.amount;
+            if (from.borrowed[loanIndex].totalAmount <= 0.01) {
+                from.borrowed.splice(loanIndex, 1);
+                Object.values(this.nodes).forEach(node => {
+                    node.loans = node.loans.filter(l => l.loanId !== loanId);
+                });
+            }
+            break;
+        }
         case 'swap_and_transfer':
             const { swapFrom, swapAmountIn, neededForTransfer } = tx.meta;
             const swapAmountOut = this.ammService.getAmountOut(swapFrom, tx.currency, swapAmountIn);
@@ -1630,6 +1738,8 @@ function populateDropdowns() {
   // Default values
   const liquidityCurrencySelect = document.getElementById('liquidityCurrency');
   if (liquidityCurrencySelect) liquidityCurrencySelect.value = 'USD';
+
+  populateLoanDropdown();
 }
 // ========== MODAL FUNCTIONS ==========
 // Modal for transaction history (accounts/wallets/loans)
