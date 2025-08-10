@@ -197,17 +197,14 @@
   }
 
   #main {
-    display: grid;
-    grid-template-columns: 360px 1fr;
-    gap: 18px;
-    margin-top: 18px;
+    display: flex;
+    gap: 25px;
+    flex-wrap: wrap;
   }
 
   #networkPanel {
-    background: #fff;
-    padding: 12px;
-    border-radius: 10px;
-    box-shadow: 0 2px 10px rgba(20,40,80,0.05);
+    flex: 1;
+    min-width: 360px;
   }
 
   #networkCanvas {
@@ -237,13 +234,8 @@
     display: flex;
     flex-direction: column;
     gap: 14px;
-  }
-
-  .card {
-    background: #fff;
-    padding: 12px;
-    border-radius: 10px;
-    box-shadow: 0 2px 8px rgba(20,40,80,0.04);
+    flex: 2;
+    min-width: 300px;
   }
 
   #nodesGrid {
@@ -376,7 +368,7 @@
 
   <!-- Tokenised Business Services Section -->
   <div id="crossborder" class="main-section">
-    <h2>Cross Border Transfer & Wallet Management</h2>
+    <h2>Tokenised Payments and Liquidity Services</h2>
     <div class="menu-bar" aria-label="Function controls menu">
       <!-- Tokenize -->
       <div class="menu-item" role="group" aria-label="Tokenize funds">
@@ -507,7 +499,7 @@
     <h2 style="margin-top: 40px; border-top: 2px solid #dee2e6; padding-top: 20px;">DLT Network View</h2>
 
     <div id="main">
-      <aside id="networkPanel" class="card">
+      <aside id="networkPanel" class="dashboard-section">
         <h3 style="margin-top:0">Network Map</h3>
         <canvas id="networkCanvas"></canvas>
         <div style="margin-top:8px">
@@ -516,7 +508,7 @@
         </div>
       </aside>
       <main id="dashboard-network">
-        <section class="card">
+        <section class="dashboard-section">
           <h3 style="margin:0">Nodes & Wallets</h3>
           <div id="nodesGrid"></div>
         </section>
@@ -558,7 +550,6 @@
 </div>
 <script>
 // ========== SHARED CONFIGURATION ==========
-const currencies = ['USD', 'AUD', 'JPY', 'SGD', 'HKD', 'GBP', 'EUR', 'CAD', 'CHF', 'NZD'];
 const sovereigns = {
   'Sydney': 'AUD',
   'Tokyo': 'JPY',
@@ -568,6 +559,8 @@ const sovereigns = {
   'London': 'GBP',
   'New York': 'USD'
 };
+const sovereign_currencies = [...new Set(Object.values(sovereigns))];
+const currencies = ['USD', ...sovereign_currencies.filter(c => c !== 'USD')].sort();
 const cities = Object.keys(sovereigns);
 // ========== SHARED DATA STRUCTURES ==========
 let sharedParticipants = {};
@@ -691,6 +684,7 @@ function tokenizeFromUI() {
   processTransaction(tx);
 }
 function transferFromUI() {
+    recalcSharedLiquidityPool(); // Recalculate pool at the start of any action
     const senderName = document.getElementById('sender').value;
     const receiverName = document.getElementById('receiver').value;
     const transferCurrency = document.getElementById('transferCurrency').value;
@@ -726,6 +720,7 @@ function transferFromUI() {
 
     // Check if a swap is possible and prompt user
     if (bestSwapCandidate) {
+        network.syncLiquidityService(); // Ensure AMM service has latest liquidity
         const amountNeededFromSwap = network.ammService.getAmountIn(bestSwapCandidate, transferCurrency, needed);
         if (sender.wallets[bestSwapCandidate] >= amountNeededFromSwap) {
             if (confirm(`You are short ${needed.toFixed(2)} ${transferCurrency}. Swap ~${amountNeededFromSwap.toFixed(2)} ${bestSwapCandidate} to complete the transfer?`)) {
@@ -787,14 +782,66 @@ function crossCurrencyTransfer() {
   processTransaction(tx);
 }
 function repayBorrowedUI() {
-  const participant = document.getElementById('repayParticipant').value;
-  const currency = document.getElementById('repayCurrency').value;
-  const amount = parseFloat(document.getElementById('repayAmount').value);
-  if(isNaN(amount) || amount <= 0) { alert("Invalid repay amount."); return; }
+    recalcSharedLiquidityPool(); // Recalculate pool at the start of any action
+    const participantName = document.getElementById('repayParticipant').value;
+    const currency = document.getElementById('repayCurrency').value;
+    const amount = parseFloat(document.getElementById('repayAmount').value);
+    if(isNaN(amount) || amount <= 0) { alert("Invalid repay amount."); return; }
 
-  const repayAmount = Math.min(amount, sharedParticipants[participant].borrowed[currency].amount);
-  const tx = new Transaction({ type: 'repay', from: participant, to: participant, currency: currency, amount: repayAmount });
-  processTransaction(tx);
+    const participant = sharedParticipants[participantName];
+    const maxRepayAmount = participant.borrowed[currency].amount;
+    const repayAmount = Math.min(amount, maxRepayAmount);
+
+    if (repayAmount <= 0) {
+        alert("No outstanding loan in this currency or invalid amount.");
+        return;
+    }
+
+    const walletBalance = participant.wallets[currency];
+
+    // Case 1: Sufficient funds for repayment
+    if (walletBalance >= repayAmount) {
+        const tx = new Transaction({ type: 'repay', from: participantName, to: participantName, currency: currency, amount: repayAmount });
+        processTransaction(tx);
+        return;
+    }
+
+    // Case 2: Insufficient funds, try to swap
+    const neededFromWallet = repayAmount - walletBalance;
+
+    let bestSwapCandidate = null;
+    let maxBalance = 0;
+    for (const c in participant.wallets) {
+        if (c !== currency && participant.wallets[c] > maxBalance) {
+            maxBalance = participant.wallets[c];
+            bestSwapCandidate = c;
+        }
+    }
+
+    if (bestSwapCandidate) {
+        network.syncLiquidityService(); // Ensure AMM service has latest liquidity
+        const amountNeededFromSwap = network.ammService.getAmountIn(bestSwapCandidate, currency, neededFromWallet);
+        if (participant.wallets[bestSwapCandidate] >= amountNeededFromSwap) {
+            if (confirm(`You have an insufficient ${currency} balance to repay. Swap ~${amountNeededFromSwap.toFixed(2)} ${bestSwapCandidate} to proceed?`)) {
+                const tx = new Transaction({
+                    type: 'swap_and_repay',
+                    from: participantName,
+                    to: participantName,
+                    currency: currency,
+                    amount: repayAmount,
+                    meta: {
+                        swapFrom: bestSwapCandidate,
+                        swapAmountIn: amountNeededFromSwap
+                    }
+                });
+                processTransaction(tx);
+                return;
+            }
+        }
+    }
+
+    // Case 3: Fallback to failure
+    alert(`Repayment failed. Insufficient ${currency} balance and no swappable funds available.`);
 }
 function postInterest() {
   const freq = document.getElementById('interestFrequency').value;
@@ -998,7 +1045,7 @@ function renderWalletBalanceMatrix() {
             const balance = sharedParticipants[city].wallets[c];
             currencyTotals[c] += balance;
             const cell = row.insertCell();
-            cell.textContent = (balance / 1000000).toFixed(4); // Scale to millions
+            cell.textContent = (balance / 1000000).toFixed(2); // Scale to millions
         });
     });
 
@@ -1010,7 +1057,7 @@ function renderWalletBalanceMatrix() {
     footerRow.appendChild(totalTh);
     currencies.forEach(c => {
         const cell = footerRow.insertCell();
-        cell.textContent = (currencyTotals[c] / 1000000).toFixed(4); // Scale to millions
+        cell.textContent = (currencyTotals[c] / 1000000).toFixed(2); // Scale to millions
         cell.style.fontWeight = 'bold';
     });
 
@@ -1286,137 +1333,135 @@ class Network{
             }
             break;
         }
+        case 'swap_and_repay': {
+            const { swapFrom, swapAmountIn } = tx.meta;
+            if (participant.wallets[swapFrom] < swapAmountIn) {
+                return { valid: false, message: `Insufficient ${swapFrom} to perform swap for repayment.` };
+            }
+            if (participant.borrowed[tx.currency].amount < tx.amount) {
+                return { valid: false, message: `Repay amount is greater than outstanding loan.`};
+            }
+            break;
+        }
     }
     // If no validation fails, the transaction is valid.
     return { valid: true };
   }
 
   executeTransaction(tx) {
-    // This function modifies the shared state directly (this.nodes)
-    // It is called once per transaction by the consensus leader.
+    const from = this.nodes[tx.from];
+    const to = this.nodes[tx.to];
 
-    // Handle special case of borrow_and_transfer first as it affects all nodes.
-    if (tx.type === 'borrow_and_transfer') {
-        const { borrowAmount } = tx.meta;
-        const currency = tx.currency;
-        const totalLiquidity = this.liquidityService.pool[currency];
-        const borrowerNode = this.nodes[tx.from];
-        const receiverNode = this.nodes[tx.to];
-
-        // Debit all liquidity providers proportionally
-        if (totalLiquidity > 0) {
-            Object.values(this.nodes).forEach(p_node => {
-                const contribution = p_node.wallets[currency];
-                if (contribution > 0) {
-                    const proportion = contribution / totalLiquidity;
-                    const debitAmount = borrowAmount * proportion;
-                    p_node.wallets[currency] -= debitAmount;
-                    addSharedTransaction(p_node.name, 'Liquidity Debit', `Provided ${debitAmount.toFixed(2)} ${currency} for loan to ${tx.from}`);
-                }
-            });
-        }
-
-        // Update borrower's accounts
-        borrowerNode.loans[currency] += borrowAmount;
-        borrowerNode.borrowed[currency].amount += borrowAmount;
-        addSharedTransaction(tx.from, 'Borrow', `Borrowed ${borrowAmount.toFixed(2)} ${currency}`);
-
-        // Execute the transfer
-        borrowerNode.wallets[currency] += borrowAmount; // Explicitly add borrowed funds to wallet
-        borrowerNode.wallets[currency] -= tx.amount;   // Then subtract the full transfer amount
-        addSharedTransaction(tx.from, 'Transfer Out', `Transferred ${tx.amount.toFixed(2)} ${tx.currency} to ${tx.to}`);
-
-        receiverNode.wallets[currency] += tx.amount;
-        addSharedTransaction(tx.to, 'Transfer In', `Received ${tx.amount.toFixed(2)} ${tx.currency} from ${tx.from}`);
-
-        // Add to chain for all nodes
-        Object.values(this.nodes).forEach(node => {
-            if (!node.chain.some(t => t.id === tx.id)) {
-                node.chain.unshift(tx);
+    // The core logic for state changes.
+    switch (tx.type) {
+        case 'tokenize':
+            from.accounts[tx.currency] -= tx.amount;
+            from.wallets[tx.currency] += tx.amount;
+            addSharedTransaction(tx.from, 'Tokenize', `Tokenized ${tx.amount.toFixed(2)} ${tx.currency}`);
+            break;
+        case 'transfer':
+            from.wallets[tx.currency] -= tx.amount;
+            to.wallets[tx.currency] += tx.amount;
+            addSharedTransaction(tx.from, 'Transfer Out', `Transferred ${tx.amount.toFixed(2)} ${tx.currency} to ${tx.to}`);
+            addSharedTransaction(tx.to, 'Transfer In', `Received ${tx.amount.toFixed(2)} ${tx.currency} from ${tx.from}`);
+            break;
+        case 'burn':
+            from.wallets[tx.currency] -= tx.amount;
+            from.accounts[tx.currency] += tx.amount;
+            addSharedTransaction(tx.from, 'Burn', `Burned ${tx.amount.toFixed(2)} ${tx.currency}`);
+            break;
+        case 'swap':
+            const { fromCurrency, toCurrency, amountIn } = tx.meta;
+            const amountOut = this.ammService.getAmountOut(fromCurrency, toCurrency, amountIn);
+            if (amountOut > 0) {
+                from.wallets[fromCurrency] -= amountIn;
+                from.wallets[toCurrency] += amountOut;
+                addSharedTransaction(tx.from, 'Swap', `Swapped ${amountIn.toFixed(2)} ${fromCurrency} for ${amountOut.toFixed(2)} ${toCurrency}`);
             }
-        });
-        return; // End execution for this tx type
+            break;
+        case 'repay':
+            from.wallets[tx.currency] -= tx.amount;
+            from.borrowed[tx.currency].amount -= tx.amount;
+            from.loans[tx.currency] -= tx.amount;
+            addSharedTransaction(tx.from, 'Repay', `Repaid ${tx.amount.toFixed(2)} ${tx.currency}`);
+            break;
+        case 'borrow_and_transfer':
+            const { borrowAmount } = tx.meta;
+            const totalLiquidity = this.liquidityService.pool[tx.currency];
+
+            // Debit all providers proportionally
+            if (totalLiquidity > 0) {
+                Object.values(this.nodes).forEach(p_node => {
+                    const contribution = p_node.wallets[tx.currency];
+                    if (contribution > 0) {
+                        const proportion = contribution / totalLiquidity;
+                        p_node.wallets[tx.currency] -= borrowAmount * proportion;
+                        addSharedTransaction(p_node.name, 'Liquidity Debit', `Provided ${(borrowAmount * proportion).toFixed(2)} ${tx.currency} for loan to ${tx.from}`);
+                    }
+                });
+            }
+
+            // Update borrower's accounts
+            from.loans[tx.currency] += borrowAmount;
+            from.borrowed[tx.currency].amount += borrowAmount;
+            addSharedTransaction(tx.from, 'Borrow', `Borrowed ${borrowAmount.toFixed(2)} ${tx.currency}`);
+
+            // Execute the transfer
+            from.wallets[tx.currency] += borrowAmount;
+            from.wallets[tx.currency] -= tx.amount;
+            to.wallets[tx.currency] += tx.amount;
+            addSharedTransaction(tx.from, 'Transfer Out', `Transferred ${tx.amount.toFixed(2)} ${tx.currency} to ${tx.to}`);
+            addSharedTransaction(tx.to, 'Transfer In', `Received ${tx.amount.toFixed(2)} ${tx.currency} from ${tx.from}`);
+            break;
+        case 'swap_and_transfer':
+            const { swapFrom, swapAmountIn, neededForTransfer } = tx.meta;
+            const swapAmountOut = this.ammService.getAmountOut(swapFrom, tx.currency, swapAmountIn);
+
+            if (swapAmountOut < neededForTransfer * 0.99) { // Allow 1% slippage
+                addSharedTransaction(tx.from, 'Swap Failed', `Swap for ${tx.currency} resulted in insufficient funds.`);
+                // In a more robust system, this would throw an error to fail the transaction.
+                return;
+            }
+
+            // Perform swap
+            from.wallets[swapFrom] -= swapAmountIn;
+            from.wallets[tx.currency] += swapAmountOut;
+            addSharedTransaction(tx.from, 'Swap', `Swapped ${swapAmountIn.toFixed(2)} ${swapFrom} for ${swapAmountOut.toFixed(2)} ${tx.currency}`);
+
+            // Perform transfer
+            from.wallets[tx.currency] -= tx.amount;
+            to.wallets[tx.currency] += tx.amount;
+            addSharedTransaction(tx.from, 'Transfer Out', `Transferred ${tx.amount.toFixed(2)} ${tx.currency} to ${tx.to}`);
+            addSharedTransaction(tx.to, 'Transfer In', `Received ${tx.amount.toFixed(2)} ${tx.currency} from ${tx.from}`);
+            break;
+        case 'swap_and_repay': {
+            const { swapFrom, swapAmountIn } = tx.meta;
+            const neededForRepay = tx.amount - from.wallets[tx.currency];
+
+            // Perform Swap
+            const swapAmountOut = this.ammService.getAmountOut(swapFrom, tx.currency, swapAmountIn);
+            if (swapAmountOut < neededForRepay * 0.99) { // Allow 1% slippage
+                addSharedTransaction(tx.from, 'Swap Failed', `Swap for repayment resulted in insufficient funds.`);
+                return;
+            }
+            from.wallets[swapFrom] -= swapAmountIn;
+            from.wallets[tx.currency] += swapAmountOut;
+            addSharedTransaction(tx.from, 'Swap', `Swapped ${swapAmountIn.toFixed(2)} ${swapFrom} for ${swapAmountOut.toFixed(2)} ${tx.currency} for repayment`);
+
+            // Perform Repayment
+            from.wallets[tx.currency] -= tx.amount;
+            from.borrowed[tx.currency].amount -= tx.amount;
+            from.loans[tx.currency] -= tx.amount;
+            addSharedTransaction(tx.from, 'Repay', `Repaid ${tx.amount.toFixed(2)} ${tx.currency}`);
+            break;
+        }
     }
 
-    // Apply all other transaction types to nodes' chains and update balances
+    // After state changes, add the transaction to every node's chain.
     Object.values(this.nodes).forEach(node => {
-        if (node.chain.some(t => t.id === tx.id)) return; // Already processed
-
-        const participant = node;
-        switch (tx.type) {
-            case 'swap_and_transfer':
-                if (participant.name === tx.from) {
-                    const { swapFrom, swapAmountIn, neededForTransfer } = tx.meta;
-                    const amountOut = this.ammService.getAmountOut(swapFrom, tx.currency, swapAmountIn);
-
-                    // Check for slippage or failed swap
-                    if (amountOut < neededForTransfer * 0.99) { // Allow 1% slippage
-                        addSharedTransaction(participant.name, 'Swap Failed', `Swap for ${tx.currency} resulted in insufficient funds.`);
-                        // Note: In a real system, the transaction would fail here and be reverted.
-                        // Here we just log it and the transfer will likely fail silently or make the balance negative.
-                        // The validation at the top level should prevent this.
-                        return;
-                    }
-
-                    // Perform swap
-                    participant.wallets[swapFrom] -= swapAmountIn;
-                    participant.wallets[tx.currency] += amountOut;
-                    addSharedTransaction(participant.name, 'Swap', `Swapped ${swapAmountIn.toFixed(2)} ${swapFrom} for ${amountOut.toFixed(2)} ${tx.currency}`);
-
-                    // Perform transfer
-                    participant.wallets[tx.currency] -= tx.amount;
-                    addSharedTransaction(participant.name, 'Transfer Out', `Transferred ${tx.amount.toFixed(2)} ${tx.currency} to ${tx.to}`);
-                }
-                if (participant.name === tx.to) {
-                    participant.wallets[tx.currency] += tx.amount;
-                    addSharedTransaction(participant.name, 'Transfer In', `Received ${tx.amount.toFixed(2)} ${tx.currency} from ${tx.from}`);
-                }
-                break;
-            case 'tokenize':
-                if (participant.name === tx.from) {
-                    participant.accounts[tx.currency] -= tx.amount;
-                    participant.wallets[tx.currency] += tx.amount;
-                    addSharedTransaction(participant.name, 'Tokenize', `Tokenized ${tx.amount.toFixed(2)} ${tx.currency}`);
-                }
-                break;
-            case 'transfer':
-                if (participant.name === tx.from) {
-                    participant.wallets[tx.currency] -= tx.amount;
-                    addSharedTransaction(participant.name, 'Transfer Out', `Transferred ${tx.amount.toFixed(2)} ${tx.currency} to ${tx.to}`);
-                }
-                if (participant.name === tx.to) {
-                    participant.wallets[tx.currency] += tx.amount;
-                    addSharedTransaction(participant.name, 'Transfer In', `Received ${tx.amount.toFixed(2)} ${tx.currency} from ${tx.from}`);
-                }
-                break;
-            case 'burn':
-                if (participant.name === tx.from) {
-                    participant.wallets[tx.currency] -= tx.amount;
-                    participant.accounts[tx.currency] += tx.amount;
-                    addSharedTransaction(participant.name, 'Burn', `Burned ${tx.amount.toFixed(2)} ${tx.currency}`);
-                }
-                break;
-            case 'swap':
-                if (participant.name === tx.from) {
-                    const { fromCurrency, toCurrency, amountIn } = tx.meta;
-                    const amountOut = this.ammService.getAmountOut(fromCurrency, toCurrency, amountIn);
-                    if (amountOut > 0) {
-                        participant.wallets[fromCurrency] -= amountIn;
-                        participant.wallets[toCurrency] += amountOut;
-                        addSharedTransaction(participant.name, 'Swap', `Swapped ${amountIn.toFixed(2)} ${fromCurrency} to ${amountOut.toFixed(2)} ${toCurrency}`);
-                    }
-                }
-                break;
-            case 'repay':
-                if (participant.name === tx.from) {
-                    participant.wallets[tx.currency] -= tx.amount;
-                    participant.borrowed[tx.currency].amount -= tx.amount;
-                    participant.loans[tx.currency] -= tx.amount;
-                    addSharedTransaction(participant.name, 'Repay', `Repaid ${tx.amount.toFixed(2)} ${tx.currency}`);
-                }
-                break;
+        if (!node.chain.some(t => t.id === tx.id)) {
+            node.chain.unshift(tx);
         }
-        node.chain.unshift(tx);
     });
   }
 }
@@ -1700,27 +1745,31 @@ function filterAuditTable() {
 }
 
 function renderInterestRateTable() {
+    const tableHead = document.getElementById('interestRateTable').querySelector('thead tr');
+    tableHead.innerHTML = `<th>Currency</th><th>Deposit Rate (%)</th><th>Lending Rate (%)</th>`;
+
     const tableBody = document.getElementById('interestRateTable').querySelector('tbody');
     tableBody.innerHTML = ''; // Clear existing rows
 
     for (const currency in INTEREST_RATES) {
+        if (!currencies.includes(currency)) continue; // Only show active currencies
         const rates = INTEREST_RATES[currency];
         const row = document.createElement('tr');
 
         row.innerHTML = `
             <td>${currency}</td>
-            <td><input type="number" value="${rates.credit}" step="0.0001" onchange="updateInterestRate('${currency}', 'credit', this.value)" style="width: 100px;"></td>
-            <td><input type="number" value="${rates.debit}" step="0.0001" onchange="updateInterestRate('${currency}', 'debit', this.value)" style="width: 100px;"></td>
+            <td><input type="number" value="${(rates.credit * 100).toFixed(4)}" step="0.01" onchange="updateInterestRate('${currency}', 'credit', this.value)" style="width: 100px;"></td>
+            <td><input type="number" value="${(rates.debit * 100).toFixed(4)}" step="0.01" onchange="updateInterestRate('${currency}', 'debit', this.value)" style="width: 100px;"></td>
         `;
         tableBody.appendChild(row);
     }
 }
 
 function updateInterestRate(currency, type, value) {
-    const rate = parseFloat(value);
-    if (!isNaN(rate) && rate >= 0) {
-        INTEREST_RATES[currency][type] = rate;
-        addSharedAudit(`Updated ${currency} ${type} interest rate to ${rate}.`);
+    const rateAsPercent = parseFloat(value);
+    if (!isNaN(rateAsPercent) && rateAsPercent >= 0) {
+        INTEREST_RATES[currency][type] = rateAsPercent / 100; // Store as decimal
+        addSharedAudit(`Updated ${currency} ${type} interest rate to ${rateAsPercent}%.`);
     } else {
         alert('Invalid interest rate. Please enter a non-negative number.');
         renderInterestRateTable(); // Re-render to show the old value
@@ -1728,26 +1777,30 @@ function updateInterestRate(currency, type, value) {
 }
 
 function renderStakingYieldTable() {
+    const tableHead = document.getElementById('stakingYieldTable').querySelector('thead tr');
+    tableHead.innerHTML = `<th>Currency</th><th>Yield Rate (%)</th>`;
+
     const tableBody = document.getElementById('stakingYieldTable').querySelector('tbody');
     tableBody.innerHTML = ''; // Clear existing rows
 
     for (const currency in STAKING_YIELDS) {
+        if (!currencies.includes(currency)) continue; // Only show active currencies
         const yieldRate = STAKING_YIELDS[currency];
         const row = document.createElement('tr');
 
         row.innerHTML = `
             <td>${currency}</td>
-            <td><input type="number" value="${yieldRate}" step="0.0001" onchange="updateStakingYield('${currency}', this.value)" style="width: 100px;"></td>
+            <td><input type="number" value="${(yieldRate * 100).toFixed(4)}" step="0.01" onchange="updateStakingYield('${currency}', this.value)" style="width: 100px;"></td>
         `;
         tableBody.appendChild(row);
     }
 }
 
 function updateStakingYield(currency, value) {
-    const rate = parseFloat(value);
-    if (!isNaN(rate) && rate >= 0) {
-        STAKING_YIELDS[currency] = rate;
-        addSharedAudit(`Updated ${currency} staking yield to ${rate}.`);
+    const rateAsPercent = parseFloat(value);
+    if (!isNaN(rateAsPercent) && rateAsPercent >= 0) {
+        STAKING_YIELDS[currency] = rateAsPercent / 100; // Store as decimal
+        addSharedAudit(`Updated ${currency} staking yield to ${rateAsPercent}%.`);
     } else {
         alert('Invalid staking yield. Please enter a non-negative number.');
         renderStakingYieldTable(); // Re-render to show the old value
