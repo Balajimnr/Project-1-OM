@@ -1231,6 +1231,11 @@ class Network{
             this.executeTransaction(tx); // Centralized execution
             addSharedAudit(`Transaction ${tx.id} (${tx.type}) was successfully processed.`);
             successfulTxs++;
+
+            // After a transaction is successfully executed, it must be removed from all mempools.
+            Object.values(this.nodes).forEach(node => {
+                node.mempool = node.mempool.filter(mempoolTx => mempoolTx.id !== tx.id);
+            });
         } else {
             allSucceeded = false;
             finalMessage = `Transaction Failed: ${validationResult.message}`;
