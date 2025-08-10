@@ -64,9 +64,9 @@
   }
 
   .menu-bar {
-    display: flex;
-    gap: 20px;
-    flex-wrap: wrap;
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(400px, 1fr));
+    gap: 15px;
     background: #fff;
     padding: 12px 20px;
     border-radius: 8px;
@@ -969,7 +969,7 @@ function updateDashboard() {
   cities.forEach(city => {
     const div = document.createElement('div');
     div.style.marginBottom = '10px';
-    div.innerHTML = `<strong>${city} (${sovereigns[city]})</strong> <span class="expandable" onclick="toggleDetails('${city}-accounts')">[+]</span>`;
+    div.innerHTML = `<strong>${city}</strong> <span class="expandable" onclick="toggleDetails('${city}-accounts')">[+]</span>`;
     const details = document.createElement('div');
     details.id = `${city}-accounts`;
     details.className = 'hidden';
@@ -1011,20 +1011,36 @@ function updateDashboard() {
   });
   // Loans
   const loansDiv = document.getElementById('loansSection');
-  loansDiv.innerHTML = '<h3>Loan Accounts (Borrowed)</h3>';
+  loansDiv.innerHTML = '<h3>Loan Accounts</h3>';
   cities.forEach(city => {
     const participant = sharedParticipants[city];
     const div = document.createElement('div');
     div.style.marginBottom = '10px';
+    div.innerHTML = `<strong>${city}</strong> <span class="expandable" onclick="toggleDetails('${city}-loans')">[+]</span>`;
 
-    const totalBorrowed = participant.borrowed.reduce((sum, loan) => sum + loan.totalAmount, 0);
-    const loanCount = participant.borrowed.length;
-
-    div.innerHTML = `<strong>${city} (${sovereigns[city]})</strong>`;
     const details = document.createElement('div');
+    details.id = `${city}-loans`;
+    details.className = 'hidden';
     details.style.marginLeft = '12px';
-    details.innerHTML = `<span>Outstanding Loans: ${loanCount}</span><br>
-                         <span>Total Value: ${totalBorrowed.toFixed(2)}</span>`;
+
+    // Aggregate borrowed amounts by currency
+    const borrowedByCurrency = {};
+    participant.borrowed.forEach(loan => {
+        borrowedByCurrency[loan.currency] = (borrowedByCurrency[loan.currency] || 0) + loan.totalAmount;
+    });
+
+    currencies.forEach(c => {
+      const val = borrowedByCurrency[c] || 0;
+      if (val > 0) { // Only show currencies with active loans
+        const a = document.createElement('a');
+        a.href = "#";
+        a.textContent = `${c}: ${val.toFixed(2)}`;
+        a.onclick = (e) => { e.preventDefault(); openModal(city, 'loan', c); };
+        details.appendChild(a);
+        details.appendChild(document.createElement('br'));
+      }
+    });
+
     div.appendChild(details);
     loansDiv.appendChild(div);
   });
@@ -1561,11 +1577,30 @@ class Network{
             from.wallets[tx.currency] += swapAmountOut;
             addSharedTransaction(tx.from, 'Swap', `Swapped ${swapAmountIn.toFixed(2)} ${swapFrom} for ${swapAmountOut.toFixed(2)} ${tx.currency} for repayment`);
 
-            // Perform Repayment
+            // Perform Repayment (logic is identical to 'repay' case)
+            const loanIndex = from.borrowed.findIndex(l => l.loanId === loanId);
+            if (loanIndex === -1) break;
+
+            const loan = from.borrowed[loanIndex];
+            const originalTotal = loan.lenders.reduce((sum, l) => sum + l.amount, 0);
+
+            loan.lenders.forEach(lender => {
+                const proportion = lender.amount / originalTotal;
+                const creditAmount = tx.amount * proportion;
+                this.nodes[lender.name].wallets[tx.currency] += creditAmount;
+                addSharedTransaction(lender.name, 'Repayment Received', `Received ${creditAmount.toFixed(2)} ${tx.currency} for loan ${loanId}`);
+            });
+
             from.wallets[tx.currency] -= tx.amount;
-            from.borrowed[tx.currency].amount -= tx.amount;
-            from.loans[tx.currency] -= tx.amount;
-            addSharedTransaction(tx.from, 'Repay', `Repaid ${tx.amount.toFixed(2)} ${tx.currency}`);
+            addSharedTransaction(tx.from, 'Repay', `Repaid ${tx.amount.toFixed(2)} ${tx.currency} for loan ${loanId}`);
+
+            from.borrowed[loanIndex].totalAmount -= tx.amount;
+            if (from.borrowed[loanIndex].totalAmount <= 0.01) {
+                from.borrowed.splice(loanIndex, 1);
+                Object.values(this.nodes).forEach(node => {
+                    node.loans = node.loans.filter(l => l.loanId !== loanId);
+                });
+            }
             break;
         }
     }
