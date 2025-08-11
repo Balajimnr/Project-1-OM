@@ -634,6 +634,18 @@ function addSharedAudit(msg) {
   sharedAuditTrail.unshift({ timestamp: new Date(), message: msg });
   if (sharedAuditTrail.length > 100) sharedAuditTrail.pop();
 }
+
+function resetActionForms() {
+    const menuBar = document.querySelector('.menu-bar');
+    menuBar.querySelectorAll('input[type="number"]').forEach(input => input.value = '');
+    menuBar.querySelectorAll('select').forEach(select => {
+        if (select.id !== 'repayLoanId') { // Don't reset the loan ID dropdown
+             select.selectedIndex = 0;
+        }
+    });
+    // After resetting dropdowns, we might need to update dependent ones
+    populateLoanDropdown();
+}
 // ========== TRANSACTION PROCESSING ==========
 const statusModalOverlay = document.getElementById('statusModalOverlay');
 const statusModalMessage = document.getElementById('statusModalMessage');
@@ -656,7 +668,10 @@ function processTransaction(tx, onSuccessCallback) {
 
             if (result.success) {
                 // Use a timeout to ensure the UI updates after the current execution stack clears.
-                setTimeout(() => updateAllDisplays(), 0);
+            setTimeout(() => {
+                updateAllDisplays();
+                resetActionForms();
+            }, 0);
                 statusModalMessage.textContent = result.message || 'Transaction Successful!';
                 if (onSuccessCallback) {
                     onSuccessCallback();
@@ -790,7 +805,7 @@ function populateLoanDropdown() {
     loanDropdown.innerHTML = '';
 
     const participant = sharedParticipants[participantName];
-    const outstandingLoans = participant.borrowed.filter(loan => loan.currency === currency && loan.totalAmount > 0);
+    const outstandingLoans = participant.borrowed.filter(loan => loan.currency === currency && loan.status === 'open');
 
     if (outstandingLoans.length === 0) {
         const opt = document.createElement('option');
@@ -829,7 +844,11 @@ function repayBorrowedUI() {
     }
 
     const currency = loanToRepay.currency;
-    const repayAmount = Math.min(amount, loanToRepay.totalAmount);
+    if (amount > loanToRepay.totalAmount) {
+        alert(`Repayment amount cannot exceed the outstanding loan balance of ${loanToRepay.totalAmount.toFixed(2)}.`);
+        return;
+    }
+    const repayAmount = amount;
     const walletBalance = participant.wallets[currency];
 
     // Case 1: Sufficient funds for repayment
@@ -992,7 +1011,7 @@ function updateDashboard() {
   cities.forEach(city => {
     const div = document.createElement('div');
     div.style.marginBottom = '10px';
-    div.innerHTML = `<strong>${city} (${sovereigns[city]})</strong> <span class="expandable" onclick="toggleDetails('${city}-wallets')">[+]</span>`;
+    div.innerHTML = `<strong>${city}</strong> <span class="expandable" onclick="toggleDetails('${city}-wallets')">[+]</span>`;
     const details = document.createElement('div');
     details.id = `${city}-wallets`;
     details.className = 'hidden';
@@ -1453,14 +1472,11 @@ class Network{
             from.wallets[tx.currency] -= tx.amount;
             addSharedTransaction(tx.from, 'Repay', `Repaid ${tx.amount.toFixed(2)} ${tx.currency} for loan ${loanId}`);
 
-            // Update loan records for borrower and lenders
+            // Update loan records for borrower
             from.borrowed[loanIndex].totalAmount -= tx.amount;
             if (from.borrowed[loanIndex].totalAmount <= 0.01) { // If fully paid
-                from.borrowed.splice(loanIndex, 1);
-                // Remove from all lenders' records
-                Object.values(this.nodes).forEach(node => {
-                    node.loans = node.loans.filter(l => l.loanId !== loanId);
-                });
+                from.borrowed[loanIndex].status = 'repaid';
+                // We no longer remove the loan from the lender's history.
             }
             break;
         }
@@ -1500,6 +1516,7 @@ class Network{
                 currency: tx.currency,
                 totalAmount: borrowAmount,
                 lenders: lenders,
+                status: 'open', // New property
                 lastInterestPostDate: new Date()
             });
             addSharedTransaction(tx.from, 'Borrow', `Borrowed ${borrowAmount.toFixed(2)} ${tx.currency} (Loan: ${loanId})`);
@@ -1539,10 +1556,39 @@ class Network{
 
             from.borrowed[loanIndex].totalAmount -= tx.amount;
             if (from.borrowed[loanIndex].totalAmount <= 0.01) {
-                from.borrowed.splice(loanIndex, 1);
-                Object.values(this.nodes).forEach(node => {
-                    node.loans = node.loans.filter(l => l.loanId !== loanId);
-                });
+                from.borrowed[loanIndex].status = 'repaid';
+            }
+            break;
+        }
+        case 'swap_and_repay': {
+            const { loanId, swapFrom, swapAmountIn } = tx.meta;
+
+            // 1. Perform Swap
+            const swapAmountOut = this.ammService.getAmountOut(swapFrom, tx.currency, swapAmountIn);
+            from.wallets[swapFrom] -= swapAmountIn;
+            from.wallets[tx.currency] += swapAmountOut;
+            addSharedTransaction(tx.from, 'Swap', `Swapped ${swapAmountIn.toFixed(2)} ${swapFrom} for repayment`);
+
+            // 2. Perform Repayment (logic is identical to 'repay' case)
+            const loanIndex = from.borrowed.findIndex(l => l.loanId === loanId);
+            if (loanIndex === -1) break;
+
+            const loan = from.borrowed[loanIndex];
+            const originalTotal = loan.lenders.reduce((sum, l) => sum + l.amount, 0);
+
+            loan.lenders.forEach(lender => {
+                const proportion = lender.amount / originalTotal;
+                const creditAmount = tx.amount * proportion;
+                this.nodes[lender.name].wallets[tx.currency] += creditAmount;
+                addSharedTransaction(lender.name, 'Repayment Received', `Received ${creditAmount.toFixed(2)} ${tx.currency} for loan ${loanId}`);
+            });
+
+            from.wallets[tx.currency] -= tx.amount;
+            addSharedTransaction(tx.from, 'Repay', `Repaid ${tx.amount.toFixed(2)} ${tx.currency} for loan ${loanId}`);
+
+            from.borrowed[loanIndex].totalAmount -= tx.amount;
+            if (from.borrowed[loanIndex].totalAmount <= 0.01) {
+                from.borrowed[loanIndex].status = 'repaid';
             }
             break;
         }
