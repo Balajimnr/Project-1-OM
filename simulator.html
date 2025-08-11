@@ -1384,11 +1384,15 @@ class Network{
             break;
         }
         case 'swap_and_repay': {
-            const { swapFrom, swapAmountIn } = tx.meta;
+            const { loanId, swapFrom, swapAmountIn } = tx.meta;
             if (participant.wallets[swapFrom] < swapAmountIn) {
                 return { valid: false, message: `Insufficient ${swapFrom} to perform swap for repayment.` };
             }
-            if (participant.borrowed[tx.currency].amount < tx.amount) {
+            const loanToRepay = participant.borrowed.find(l => l.loanId === loanId);
+            if (!loanToRepay) {
+                return { valid: false, message: `Loan with ID ${loanId} not found for repayment.`};
+            }
+            if (loanToRepay.totalAmount < tx.amount) {
                 return { valid: false, message: `Repay amount is greater than outstanding loan.`};
             }
             break;
