@@ -1050,10 +1050,17 @@ function updateDashboard() {
 
     currencies.forEach(c => {
       const val = borrowedByCurrency[c] || 0;
-      if (val > 0) { // Only show currencies with active loans
+      // Find if there was ever a loan for this currency, even if now repaid
+      const hasEverHadLoan = participant.borrowed.some(l => l.currency === c);
+
+      if (hasEverHadLoan) {
         const a = document.createElement('a');
         a.href = "#";
         a.textContent = `${c}: ${val.toFixed(2)}`;
+        if (val <= 0.01) {
+            a.style.textDecoration = 'line-through';
+            a.style.color = '#999';
+        }
         a.onclick = (e) => { e.preventDefault(); openModal(city, 'loan', c); };
         details.appendChild(a);
         details.appendChild(document.createElement('br'));
